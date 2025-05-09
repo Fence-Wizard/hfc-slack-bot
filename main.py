@@ -9,87 +9,133 @@ app = App(
     signing_secret=os.environ["SLACK_SIGNING_SECRET"]
 )
 
-# Flask app for handling requests
+# Initialize Flask app
 flask_app = Flask(__name__)
 handler = SlackRequestHandler(app)
 
-# Store anonymous votes and comments in memory
+# Store anonymous votes and comments
 votes = {"good": 0, "neutral": 0, "bad": 0}
 comments = []
 
-# Slash command /survey
+# Slash command: /survey
 @app.command("/survey")
-def handle_survey_command(ack, body, client):
-    ack()
-    channel_id = body["channel_id"]
-    client.chat_postMessage(
-        channel=channel_id,
-        text="*HFC Anonymous Survey*:\nHow do you feel about our new process?",
-        blocks=[
-            {"type": "section", "text": {"type": "mrkdwn", "text": "How do you feel about our new process?"}},
-            {"type": "actions", "elements": [
-                {"type": "button", "text": {"type": "plain_text", "text": "👍 Good"}, "value": "good", "action_id": "vote_good"},
-                {"type": "button", "text": {"type": "plain_text", "text": "😐 Neutral"}, "value": "neutral", "action_id": "vote_neutral"},
-                {"type": "button", "text": {"type": "plain_text", "text": "👎 Bad"}, "value": "bad", "action_id": "vote_bad"},
-                {"type": "button", "text": {"type": "plain_text", "text": "✏️ Leave a comment"}, "action_id": "open_comment_modal"},
-            ]}
-        ]
-    )
+def handle_survey_command(ack, body, client, logger):
+    try:
+        ack()  # Must acknowledge within 3 seconds to avoid "dispatch_failed"
+        logger.info("✅ /survey slash command received")
 
-# Button voting logic
+        channel_id = body.get("channel_id")
+        if not channel_id:
+            logger.error("❌ No channel_id in slash command body")
+            return
+
+        client.chat_postMessage(
+            channel=channel_id,
+            text="*HFC Anonymous Survey*:\nHow do you feel about our new process?",
+            blocks=[
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "How do you feel about our new process?"}
+                },
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "👍 Good"},
+                            "value": "good",
+                            "action_id": "vote_good"
+                        },
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "😐 Neutral"},
+                            "value": "neutral",
+                            "action_id": "vote_neutral"
+                        },
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "👎 Bad"},
+                            "value": "bad",
+                            "action_id": "vote_bad"
+                        },
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "✏️ Leave a comment"},
+                            "action_id": "open_comment_modal"
+                        }
+                    ]
+                }
+            ]
+        )
+
+        logger.info("✅ Survey message sent successfully")
+    except Exception as e:
+        logger.error(f"❌ Error in /survey handler: {e}")
+
+# Button vote handlers
 @app.action("vote_good")
 @app.action("vote_neutral")
 @app.action("vote_bad")
-def handle_vote(ack, action, respond):
+def handle_vote(ack, action, respond, logger):
     ack()
     vote = action["value"]
     votes[vote] += 1
     respond(delete_original=True)
     respond("✅ Your anonymous vote was recorded. Thank you!")
+    logger.info(f"🗳 Vote recorded: {vote}")
 
-# Comment modal logic
+# Modal trigger
 @app.action("open_comment_modal")
-def open_comment_modal(ack, body, client):
+def open_comment_modal(ack, body, client, logger):
     ack()
-    trigger_id = body["trigger_id"]
-    client.views_open(
-        trigger_id=trigger_id,
-        view={
-            "type": "modal",
-            "callback_id": "submit_comment",
-            "title": {"type": "plain_text", "text": "Anonymous Feedback"},
-            "blocks": [
-                {
-                    "type": "input",
-                    "block_id": "comment_block",
-                    "label": {"type": "plain_text", "text": "What's on your mind?"},
-                    "element": {
-                        "type": "plain_text_input",
-                        "action_id": "comment_input",
-                        "multiline": True
+    try:
+        client.views_open(
+            trigger_id=body["trigger_id"],
+            view={
+                "type": "modal",
+                "callback_id": "submit_comment",
+                "title": {"type": "plain_text", "text": "Anonymous Feedback"},
+                "blocks": [
+                    {
+                        "type": "input",
+                        "block_id": "comment_block",
+                        "label": {"type": "plain_text", "text": "What's on your mind?"},
+                        "element": {
+                            "type": "plain_text_input",
+                            "action_id": "comment_input",
+                            "multiline": True
+                        }
                     }
-                }
-            ],
-            "submit": {"type": "plain_text", "text": "Submit"}
-        }
-    )
+                ],
+                "submit": {"type": "plain_text", "text": "Submit"}
+            }
+        )
+        logger.info("📝 Comment modal opened")
+    except Exception as e:
+        logger.error(f"❌ Error opening comment modal: {e}")
 
+# Modal submission
 @app.view("submit_comment")
-def handle_comment_submission(ack, view):
+def handle_comment_submission(ack, view, logger):
     ack()
-    comment = view["state"]["values"]["comment_block"]["comment_input"]["value"]
-    comments.append(comment)
+    try:
+        comment = view["state"]["values"]["comment_block"]["comment_input"]["value"]
+        comments.append(comment)
+        logger.info(f"📝 Comment submitted: {comment}")
+    except Exception as e:
+        logger.error(f"❌ Error processing submitted comment: {e}")
 
 # Slack events endpoint
 @flask_app.route("/slack/events", methods=["POST"])
 def slack_events():
     return handler.handle(request)
 
-# Home route to test Render
-@flask_app.route("/", methods=["GET"])
+# Healthcheck route (for Render)
+@flask_app.route("/")
 def home():
     return "✅ HFC Survey Bot is running!"
 
-# Required to run Flask via gunicorn
+# Gunicorn entry point
 if __name__ == "__main__":
-    flask_app.run(host="0.0.0.0", port=3000)
+    port = int(os.environ.get("PORT", 3000))
+    flask_app.run(host="0.0.0.0", port=port)
