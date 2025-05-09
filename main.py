@@ -128,6 +128,7 @@ def handle_comment_submission(ack, view, logger):
 # Slack events endpoint
 @flask_app.route("/slack/events", methods=["POST"])
 def slack_events():
+    print("✅ POST /slack/events hit!")
     return handler.handle(request)
 
 # Healthcheck route (for Render)
