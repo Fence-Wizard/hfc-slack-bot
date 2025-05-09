@@ -3,144 +3,140 @@ from slack_bolt.adapter.flask import SlackRequestHandler
 from flask import Flask, request
 import os
 
-# Initialize Slack app
-app = App(
-    token=os.environ["SLACK_BOT_TOKEN"],
-    signing_secret=os.environ["SLACK_SIGNING_SECRET"]
-)
-
-# Initialize Flask app
+# Slack App & Flask setup
+app = App(token=os.environ["SLACK_BOT_TOKEN"],
+          signing_secret=os.environ["SLACK_SIGNING_SECRET"])
 flask_app = Flask(__name__)
 handler = SlackRequestHandler(app)
 
-# Store anonymous votes and comments
-votes = {"good": 0, "neutral": 0, "bad": 0}
-comments = []
+# In-memory poll storage
+poll_data = {
+    "question": None,
+    "options": [],
+    "votes": {},  # {user_id: option_index}
+    "tallies": {}  # {option_index: vote_count}
+}
 
-# Slash command: /survey
-@app.command("/survey")
-def handle_survey_command(ack, body, client, logger):
+
+# Slash command: /poll "Question?" "Option 1" "Option 2" ...
+@app.command("/poll")
+def create_poll(ack, body, client, logger):
+    ack()
     try:
-        ack()  # Must acknowledge within 3 seconds to avoid "dispatch_failed"
-        logger.info("✅ /survey slash command received")
-
-        channel_id = body.get("channel_id")
-        if not channel_id:
-            logger.error("❌ No channel_id in slash command body")
+        text = body.get("text", "").strip()
+        parts = [p.strip('"') for p in text.split('"') if p.strip() and p != " "]
+        
+        if len(parts) < 2:
+            client.chat_postEphemeral(
+                channel=body["channel_id"],
+                user=body["user_id"],
+                text="❗ Please provide a question and at least one option in quotes.\nExample: `/poll \"Where to eat?\" \"Chipotle\" \"Panera\" \"Tazza\"`"
+            )
             return
 
-        client.chat_postMessage(
-            channel=channel_id,
-            text="*HFC Anonymous Survey*:\nHow do you feel about our new process?",
-            blocks=[
+        question = parts[0]
+        options = parts[1:]
+        if len(options) > 5:
+            client.chat_postEphemeral(
+                channel=body["channel_id"],
+                user=body["user_id"],
+                text="⚠️ Please limit to 5 options."
+            )
+            return
+
+        # Reset current poll data
+        poll_data["question"] = question
+        poll_data["options"] = options
+        poll_data["votes"] = {}
+        poll_data["tallies"] = {i: 0 for i in range(len(options))}
+
+        # Post poll
+        blocks = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*📊 {question}*"}}
+        ]
+        blocks.append({
+            "type": "actions",
+            "elements": [
                 {
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "How do you feel about our new process?"}
-                },
-                {
-                    "type": "actions",
-                    "elements": [
-                        {
-                            "type": "button",
-                            "text": {"type": "plain_text", "text": "👍 Good"},
-                            "value": "good",
-                            "action_id": "vote_good"
-                        },
-                        {
-                            "type": "button",
-                            "text": {"type": "plain_text", "text": "😐 Neutral"},
-                            "value": "neutral",
-                            "action_id": "vote_neutral"
-                        },
-                        {
-                            "type": "button",
-                            "text": {"type": "plain_text", "text": "👎 Bad"},
-                            "value": "bad",
-                            "action_id": "vote_bad"
-                        },
-                        {
-                            "type": "button",
-                            "text": {"type": "plain_text", "text": "✏️ Leave a comment"},
-                            "action_id": "open_comment_modal"
-                        }
-                    ]
-                }
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": option},
+                    "value": str(i),
+                    "action_id": f"vote_{i}"
+                } for i, option in enumerate(options)
             ]
+        })
+
+        client.chat_postMessage(
+            channel=body["channel_id"],
+            blocks=blocks,
+            text=f"📊 {question}"
         )
-
-        logger.info("✅ Survey message sent successfully")
     except Exception as e:
-        logger.error(f"❌ Error in /survey handler: {e}")
+        logger.error(f"Error in /poll: {e}")
 
-# Button vote handlers
-@app.action("vote_good")
-@app.action("vote_neutral")
-@app.action("vote_bad")
-def handle_vote(ack, action, respond, logger):
-    ack()
-    vote = action["value"]
-    votes[vote] += 1
-    respond(delete_original=True)
-    respond("✅ Your anonymous vote was recorded. Thank you!")
-    logger.info(f"🗳 Vote recorded: {vote}")
 
-# Modal trigger
-@app.action("open_comment_modal")
-def open_comment_modal(ack, body, client, logger):
+# Slash command: /pollresults
+@app.command("/pollresults")
+def show_poll_results(ack, body, client):
     ack()
-    try:
-        client.views_open(
-            trigger_id=body["trigger_id"],
-            view={
-                "type": "modal",
-                "callback_id": "submit_comment",
-                "title": {"type": "plain_text", "text": "Anonymous Feedback"},
-                "blocks": [
-                    {
-                        "type": "input",
-                        "block_id": "comment_block",
-                        "label": {"type": "plain_text", "text": "What's on your mind?"},
-                        "element": {
-                            "type": "plain_text_input",
-                            "action_id": "comment_input",
-                            "multiline": True
-                        }
-                    }
-                ],
-                "submit": {"type": "plain_text", "text": "Submit"}
-            }
+    if not poll_data["question"]:
+        client.chat_postEphemeral(
+            channel=body["channel_id"],
+            user=body["user_id"],
+            text="❗ No active poll found. Use `/poll` to start one."
         )
-        logger.info("📝 Comment modal opened")
-    except Exception as e:
-        logger.error(f"❌ Error opening comment modal: {e}")
+        return
 
-# Modal submission
-@app.view("submit_comment")
-def handle_comment_submission(ack, view, logger):
+    results = f"*📊 Results for:* {poll_data['question']}\n"
+    for i, option in enumerate(poll_data["options"]):
+        count = poll_data["tallies"].get(i, 0)
+        results += f"- {option}: {count} vote(s)\n"
+
+    client.chat_postEphemeral(
+        channel=body["channel_id"],
+        user=body["user_id"],
+        text=results
+    )
+
+
+# Button vote handler (shared)
+@app.action(re.compile("^vote_[0-4]$"))
+def handle_vote(ack, body, action, client):
     ack()
-    try:
-        comment = view["state"]["values"]["comment_block"]["comment_input"]["value"]
-        comments.append(comment)
-        logger.info(f"📝 Comment submitted: {comment}")
-    except Exception as e:
-        logger.error(f"❌ Error processing submitted comment: {e}")
+    user_id = body["user"]["id"]
+    option_index = int(action["action_id"].split("_")[1])
 
-# Slack events endpoint
+    if user_id in poll_data["votes"]:
+        client.chat_postEphemeral(
+            channel=body["channel"]["id"],
+            user=user_id,
+            text="✅ You’ve already voted!"
+        )
+        return
+
+    poll_data["votes"][user_id] = option_index
+    poll_data["tallies"][option_index] += 1
+
+    client.chat_postEphemeral(
+        channel=body["channel"]["id"],
+        user=user_id,
+        text=f"🗳 Vote recorded for *{poll_data['options'][option_index]}*"
+    )
+
+
+# Slack + Flask integration
 @flask_app.route("/slack/events", methods=["POST"])
 def slack_events():
-    print("✅ POST /slack/events hit!")
     return handler.handle(request)
 
-# Healthcheck route (for Render)
-@flask_app.route("/")
-def home():
-    return "✅ HFC Survey Bot is running!"
 
-@flask_app.route("/slack/events", methods=["GET"])
-def slack_events_debug():
-    return "✅ /slack/events route is live (GET)"
+# Healthcheck
+@flask_app.route("/", methods=["GET"])
+def index():
+    return "✅ Slack Poll Bot is live!"
 
-# Gunicorn entry point
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
     flask_app.run(host="0.0.0.0", port=port)
+
