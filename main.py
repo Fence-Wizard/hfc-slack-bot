@@ -135,6 +135,10 @@ def slack_events():
 def home():
     return "✅ HFC Survey Bot is running!"
 
+@flask_app.route("/slack/events", methods=["GET"])
+def slack_events_debug():
+    return "✅ /slack/events route is live (GET)"
+
 # Gunicorn entry point
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
