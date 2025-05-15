@@ -12,15 +12,15 @@ app = App(
 )
 handler = SlackRequestHandler(app)
 
-# ─── In-memory store (single poll at a time) ───────────────────────────────────
+# ─── In‐memory store ────────────────────────────────────────────────────────────
 poll_data = {
-    "type": None,               # "vote" or "feedback"
+    "type": None,               
     "question": None,           
-    "options": [],              # for vote polls
-    "feedback_questions": [],   # for feedback polls
+    "options": [],              
+    "feedback_questions": [],   
     "votes": {},
     "tallies": {},
-    "feedback_responses": [],   # list of {"user":…, "answers":[…]}
+    "feedback_responses": [],   
     "creator_id": None,
     "channel_id": None,
     "active": False,
@@ -29,11 +29,8 @@ poll_data = {
 # ─── /poll ────────────────────────────────────────────────────────────────────
 @app.command("/poll")
 def open_poll_modal(ack, body, client):
-    """Open a modal letting the creator choose poll type and supply
-       either options (vote) or questions (feedback)."""
     ack()
     trigger_id = body["trigger_id"]
-    # stash channel + creator so we can post back later
     metadata = f"{body['channel_id']}|{body['user_id']}"
 
     client.views_open(
@@ -42,9 +39,15 @@ def open_poll_modal(ack, body, client):
             "type": "modal",
             "callback_id": "submit_poll",
             "private_metadata": metadata,
-            "title": {"type": "plain:contentReference[oaicite:2]{index=2} [
+            "title": {"type": "plain_text", "text": "Create a Poll"},
+            "submit": {"type": "plain_text", "text": "Post Poll"},
+            "blocks": [
                 {
-                 :contentReference[oaicite:3]{index=3}            "type": "mrkdwn",:contentReference[oaicite:4]{index=4} fields.*\n– For a vote, fill o:contentReference[oaicite:5]{index=5}             }
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*Choose your poll type and fill in the fields below.*"
+                    }
                 },
                 {
                     "type": "input",
@@ -63,27 +66,48 @@ def open_poll_modal(ack, body, client):
                     "type": "input",
                     "block_id": "question_block",
                     "label": {"type": "plain_text", "text": "Poll Title"},
-                    "element": {"type": "plain_text_input", "action_id": "question_input"}
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": "question_input",
+                        "placeholder": {
+                            "type": "plain_text",
+                            "text": "Type the main question or prompt here"
+                        }
+                    }
                 },
-                # Up to 5 vote options (only used if poll_type == "vote")
+                # Vote options
                 *[
                     {
                         "type": "input",
                         "block_id": f"option_block_{i}",
                         "optional": True,
                         "label": {"type": "plain_text", "text": f"Option {i+1}"},
-                        "element": {"type": "plain_text_input", "action_id": f"option_input_{i}"}
+                        "element": {
+                            "type": "plain_text_input",
+                            "action_id": f"option_input_{i}",
+                            "placeholder": {
+                                "type": "plain_text",
+                                "text": "Type option text here"
+                            }
+                        }
                     }
                     for i in range(5)
                 ],
-                # Up to 5 feedback questions (only used if poll_type == "feedback")
+                # Feedback questions
                 *[
                     {
                         "type": "input",
                         "block_id": f"feedback_q_block_{i}",
                         "optional": True,
                         "label": {"type": "plain_text", "text": f"Feedback Question {i+1}"},
-                        "element": {"type": "plain_text_input", "action_id": f"feedback_q_input_{i}"}
+                        "element": {
+                            "type": "plain_text_input",
+                            "action_id": f"feedback_q_input_{i}",
+                            "placeholder": {
+                                "type": "plain_text",
+                                "text": "Type your question here"
+                            }
+                        }
                     }
                     for i in range(5)
                 ],
@@ -91,27 +115,24 @@ def open_poll_modal(ack, body, client):
         }
     )
 
-# ─── Handle Poll Submission ───────────────────────────────────────────────────
+# ─── Submit Poll ───────────────────────────────────────────────────────────────
 @app.view("submit_poll")
 def handle_poll_submission(ack, body, view, client):
-    """Process the modal submission, store the poll, and post it."""
     ack()
-    metadata = view["private_metadata"].split("|")
-    channel_id, creator_id = metadata[0], metadata[1]
+    channel_id, creator_id = view["private_metadata"].split("|")
     state = view["state"]["values"]
 
     p_type = state["type_block"]["poll_type"]["selected_option"]["value"]
     title  = state["question_block"]["question_input"]["value"]
 
+    # collect
     opts, fqs = [], []
-    # gather vote options
     for i in range(5):
         val = state.get(f"option_block_{i}", {})\
                    .get(f"option_input_{i}", {})\
                    .get("value")
         if val and p_type == "vote":
             opts.append(val)
-    # gather feedback questions
     for i in range(5):
         q = state.get(f"feedback_q_block_{i}", {})\
                  .get(f"feedback_q_input_{i}", {})\
@@ -121,16 +142,12 @@ def handle_poll_submission(ack, body, view, client):
 
     # validation
     if p_type == "vote" and len(opts) < 2:
-        client.chat_postEphemeral(
-            channel=creator_id, user=creator_id,
-            text="❌ You must provide at least *2* vote options."
-        )
+        client.chat_postEphemeral(channel=creator_id, user=creator_id,
+                                  text="❌ You must provide at least *2* vote options.")
         return
     if p_type == "feedback" and len(fqs) < 1:
-        client.chat_postEphemeral(
-            channel=creator_id, user=creator_id,
-            text="❌ You must provide at least *1* feedback question."
-        )
+        client.chat_postEphemeral(channel=creator_id, user=creator_id,
+                                  text="❌ You must provide at least *1* feedback question.")
         return
 
     # store
@@ -147,7 +164,7 @@ def handle_poll_submission(ack, body, view, client):
         "active": True,
     })
 
-    # build the channel message
+    # build blocks
     if p_type == "vote":
         blocks = [
             {"type": "section",
@@ -164,7 +181,6 @@ def handle_poll_submission(ack, body, view, client):
              ]}
         ]
     else:
-        # feedback poll → one button to open the feedback modal
         blocks = [
             {"type": "section",
              "text": {"type": "mrkdwn", "text": f"*✏️ {title}*"}},
@@ -178,9 +194,10 @@ def handle_poll_submission(ack, body, view, client):
              ]}
         ]
 
+    # post the poll
     client.chat_postMessage(channel=channel_id, text=title, blocks=blocks)
 
-    # DM the creator to confirm
+    # DM creator
     try:
         im = client.conversations_open(users=creator_id)
         dm = im["channel"]["id"]
@@ -188,13 +205,12 @@ def handle_poll_submission(ack, body, view, client):
     except Exception as e:
         print(f"Error sending confirmation DM: {e}")
 
-# ─── Voting Handler (unchanged) ──────────────────────────────────────────────
-@app.action(re.compile("^vote_\\d$"))
+# ─── Voting ───────────────────────────────────────────────────────────────────
+@app.action(re.compile(r"^vote_\d$"))
 def handle_vote(ack, body, action, client):
     ack()
     if not poll_data["active"] or poll_data["type"] != "vote":
-        client.chat_postEphemeral(
-            channel=body["channel"]["id"],
+        client.chat_postEphemeral(channel=body["channel"]["id"],
             user=body["user"]["id"],
             text="❌ This poll is closed or not a vote poll."
         )
@@ -205,16 +221,13 @@ def handle_vote(ack, body, action, client):
     ch   = body["channel"]["id"]
 
     if user in poll_data["votes"]:
-        client.chat_postEphemeral(
-            channel=ch, user=user,
-            text="✅ You’ve already voted!"
-        )
+        client.chat_postEphemeral(channel=ch, user=user,
+            text="✅ You’ve already voted!")
         return
 
     poll_data["votes"][user] = choice
     poll_data["tallies"][choice] += 1
 
-    # show current tallies
     rpt = f"🗳 Vote recorded for *{poll_data['options'][choice]}*\n\n*📊 Current Results:*"
     for i, opt in enumerate(poll_data["options"]):
         rpt += f"\n• {opt}: {poll_data['tallies'][i]}"
@@ -224,18 +237,29 @@ def handle_vote(ack, body, action, client):
 # ─── Open Feedback Modal ─────────────────────────────────────────────────────
 @app.action("open_feedback")
 def open_feedback_modal(ack, body, client):
-    """When someone clicks ‘Submit Feedback’, open a modal with all questions."""
     ack()
     trigger_id = body["trigger_id"]
     questions  = poll_data["feedback_questions"]
 
-    # build one input per question
+    # add a header + one input per question
     blocks = [
+        {
+          "type": "section",
+          "text": {"type": "mrkdwn", "text": "*Please answer the following:*"}
+        }
+    ] + [
         {
           "type": "input",
           "block_id": f"resp_block_{i}",
           "label": {"type": "plain_text", "text": q},
-          "element": {"type": "plain_text_input", "action_id": f"resp_input_{i}"}
+          "element": {
+              "type": "plain_text_input",
+              "action_id": f"resp_input_{i}",
+              "placeholder": {
+                  "type": "plain_text",
+                  "text": "Your answer here"
+              }
+          }
         }
         for i, q in enumerate(questions)
     ]
@@ -251,7 +275,7 @@ def open_feedback_modal(ack, body, client):
         }
     )
 
-# ─── Handle Feedback Submission ─────────────────────────────────────────────
+# ─── Handle Feedback ─────────────────────────────────────────────────────────
 @app.view("submit_feedback")
 def handle_feedback_submission(ack, body, view, client):
     ack()
@@ -268,7 +292,6 @@ def handle_feedback_submission(ack, body, view, client):
         "answers": answers
     })
 
-    # confirm back to the user
     try:
         client.chat_postEphemeral(
             channel=poll_data["channel_id"],
@@ -282,14 +305,11 @@ def handle_feedback_submission(ack, body, view, client):
 @app.command("/pollresults")
 def show_poll_results(ack, body, client):
     ack()
-    ch  = body["channel_id"]
-    usr = body["user_id"]
+    ch, usr = body["channel_id"], body["user_id"]
 
     if not poll_data["active"]:
-        client.chat_postEphemeral(
-            channel=ch, user=usr,
-            text="❗ There’s no active poll right now."
-        )
+        client.chat_postEphemeral(channel=ch, user=usr,
+                                  text="❗ No active poll right now.")
         return
 
     if poll_data["type"] == "vote":
@@ -297,10 +317,9 @@ def show_poll_results(ack, body, client):
         for i, opt in enumerate(poll_data["options"]):
             text += f"• {opt}: {poll_data['tallies'][i]}\n"
     else:
-        text = f"*✏️ Feedback responses so far:* {poll_data['question']}\n"
+        text = f"*✏️ Feedback for:* {poll_data['question']}\n"
         for resp in poll_data["feedback_responses"]:
-            # if you want to remain anonymous, skip user ID here
-            text += f"\n— <@{resp['user']}>'s feedback:\n"
+            text += f"\n— <@{resp['user']}>'s answers:\n"
             for q, a in zip(poll_data["feedback_questions"], resp["answers"]):
                 text += f"    • *{q}*: {a}\n"
 
@@ -310,8 +329,7 @@ def show_poll_results(ack, body, client):
 @app.command("/closepoll")
 def close_poll(ack, body, client):
     ack()
-    usr = body["user_id"]
-    ch  = body["channel_id"]
+    usr, ch = body["user_id"], body["channel_id"]
 
     if poll_data["creator_id"] != usr:
         client.chat_postEphemeral(
@@ -321,21 +339,20 @@ def close_poll(ack, body, client):
         return
 
     poll_data["active"] = False
-
     if poll_data["type"] == "vote":
-        final = f"✅ Poll *'{poll_data['question']}'* closed. Final results:\n"
+        final = f"✅ Poll *{poll_data['question']}* closed. Final results:\n"
         for i, opt in enumerate(poll_data["options"]):
             final += f"• {opt}: {poll_data['tallies'][i]}\n"
     else:
-        final = f"✅ Feedback poll *'{poll_data['question']}'* closed. Collected feedback:\n"
+        final = f"✅ Feedback poll *{poll_data['question']}* closed. Collected feedback:\n"
         for resp in poll_data["feedback_responses"]:
-            final += f"\n— <@{resp['user']}>:\n"
-            for q,a in zip(poll_data["feedback_questions"], resp["answers"]):
+            final += f"\n— <@{resp['user']}>'s answers:\n"
+            for q, a in zip(poll_data["feedback_questions"], resp["answers"]):
                 final += f"    • *{q}*: {a}\n"
 
     client.chat_postMessage(channel=ch, text=final)
 
-# ─── Slack Events & Healthcheck ─────────────────────────────────────────────
+# ─── Routes ───────────────────────────────────────────────────────────────────
 @flask_app.route("/slack/events", methods=["POST"])
 def slack_events():
     return handler.handle(request)
