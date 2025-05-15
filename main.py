@@ -1,113 +1,183 @@
 import os
 import re
-from flask import Flask, request
 from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
+from flask import Flask, request
 
-# Initialize Slack app with bot token and signing secret
-app = App(
-    token=os.environ.get("SLACK_BOT_TOKEN"),
-    signing_secret=os.environ.get("SLACK_SIGNING_SECRET")
-)
-
+# Initialize Flask and Slack Bolt
 flask_app = Flask(__name__)
+app = App(token=os.environ["SLACK_BOT_TOKEN"], signing_secret=os.environ["SLACK_SIGNING_SECRET"])
 handler = SlackRequestHandler(app)
 
-# In-memory storage for poll data
-active_poll = {
+# In-memory poll state
+poll_data = {
     "question": None,
     "options": [],
-    "votes": {},
-    "voted_users": set()
+    "votes": {},    # {user_id: option_index}
+    "tallies": {},  # {option_index: vote_count}
 }
 
-# Health check route for uptime monitor
+# Health check
 @flask_app.route("/", methods=["GET"])
-def health_check():
-    return "✅ HFC Survey Bot is running!"
+def index():
+    return "✅ HFC Slack Bot is running!"
 
-# Slack event endpoint
+# Slack event route
 @flask_app.route("/slack/events", methods=["POST"])
 def slack_events():
     return handler.handle(request)
 
-# Slash command to trigger a survey
-@app.command("/survey")
-def handle_survey_command(ack, respond):
-    ack()
-    respond("*HFC Survey Bot* is active! Use `/poll` to create a poll.")
-
-# Slash command to create a poll
+# /poll command → opens modal
 @app.command("/poll")
-def handle_poll_command(ack, body, respond):
+def open_poll_modal(ack, body, client):
     ack()
-    user_id = body["user_id"]
-    text = body.get("text", "")
+    trigger_id = body["trigger_id"]
 
-    # Parse poll text as "Question | Option 1 | Option 2 | Option 3"
-    parts = [part.strip() for part in text.split("|")]
-    if len(parts) < 3:
-        respond("❌ Invalid format. Use: `/poll Question | Option 1 | Option 2 | ...`")
-        return
-
-    question = parts[0]
-    options = parts[1:]
-
-    active_poll["question"] = question
-    active_poll["options"] = options
-    active_poll["votes"] = {i: 0 for i in range(len(options))}
-    active_poll["voted_users"] = set()
-
-    blocks = [
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*{question}*"}},
-        {"type": "actions", "elements": [
+    modal_view = {
+        "type": "modal",
+        "callback_id": "poll_submission",
+        "title": {"type": "plain_text", "text": "Create a Poll"},
+        "submit": {"type": "plain_text", "text": "Post Poll"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
             {
-                "type": "button",
-                "text": {"type": "plain_text", "text": f"{i + 1}. {option}"},
-                "value": str(i),
-                "action_id": f"vote_{i}"
-            } for i, option in enumerate(options)
-        ]}
-    ]
+                "type": "input",
+                "block_id": "question_block",
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "question_input"
+                },
+                "label": {"type": "plain_text", "text": "Poll Question"}
+            }
+        ] + [
+            {
+                "type": "input",
+                "block_id": f"option_block_{i}",
+                "optional": i >= 2,
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": f"option_input_{i}"
+                },
+                "label": {"type": "plain_text", "text": f"Option {i+1}"}
+            } for i in range(5)
+        ]
+    }
 
-    respond(blocks=blocks)
+    client.views_open(trigger_id=trigger_id, view=modal_view)
 
-# Handle vote button actions
-@app.action(re.compile("^vote_[0-9]+$"))
-def handle_vote_action(ack, body, action, respond):
+# Handle modal submission
+@app.view("poll_submission")
+def handle_poll_submission(ack, body, view, client, logger):
     ack()
     user_id = body["user"]["id"]
-    vote_index = int(action["value"])
+    channel_id = body["view"]["private_metadata"] or body["view"]["team_id"]  # fallback
 
-    if user_id in active_poll["voted_users"]:
-        respond("❗ You have already voted.")
-        return
+    try:
+        question = view["state"]["values"]["question_block"]["question_input"]["value"]
+        options = []
 
-    if vote_index not in active_poll["votes"]:
-        respond("❌ Invalid vote option.")
-        return
+        for i in range(5):
+            block_id = f"option_block_{i}"
+            action_id = f"option_input_{i}"
+            input_value = view["state"]["values"].get(block_id, {}).get(action_id, {}).get("value")
+            if input_value:
+                options.append(input_value)
 
-    active_poll["votes"][vote_index] += 1
-    active_poll["voted_users"].add(user_id)
-    respond("✅ Vote recorded. Thanks!")
+        if len(options) < 2:
+            return  # Should never happen due to Slack modal validation
 
-# Slash command to show poll results
-@app.command("/pollresults")
-def handle_poll_results(ack, respond):
+        # Save poll
+        poll_data["question"] = question
+        poll_data["options"] = options
+        poll_data["votes"] = {}
+        poll_data["tallies"] = {i: 0 for i in range(len(options))}
+
+        # Create poll message
+        blocks = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*📊 {question}*"}},
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": option},
+                        "value": str(i),
+                        "action_id": f"vote_{i}"
+                    } for i, option in enumerate(options)
+                ]
+            }
+        ]
+
+        # Post to channel where command was initiated
+        client.chat_postMessage(
+            channel=body["view"]["team_id"],  # default fallback
+            text=f"📊 {question}",
+            blocks=blocks
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to post poll: {e}")
+        client.chat_postEphemeral(
+            channel=channel_id,
+            user=user_id,
+            text="❗ Failed to create poll. Please try again."
+        )
+
+# Button vote handler
+@app.action(re.compile("^vote_[0-4]$"))
+def handle_vote(ack, body, action, client):
     ack()
-    if not active_poll["question"]:
-        respond("ℹ️ No active poll.")
+    user_id = body["user"]["id"]
+    channel_id = body["channel"]["id"]
+    option_index = int(action["action_id"].split("_")[1])
+
+    if user_id in poll_data["votes"]:
+        client.chat_postEphemeral(
+            channel=channel_id,
+            user=user_id,
+            text="✅ You’ve already voted!"
+        )
         return
 
-    results = [f"*{active_poll['question']}*\n"]
-    for i, option in enumerate(active_poll["options"]):
-        vote_count = active_poll["votes"].get(i, 0)
-        results.append(f"> {option}: {vote_count} votes")
+    poll_data["votes"][user_id] = option_index
+    poll_data["tallies"][option_index] += 1
 
-    respond("\n".join(results))
+    client.chat_postEphemeral(
+        channel=channel_id,
+        user=user_id,
+        text=f"🗳 Vote recorded for *{poll_data['options'][option_index]}*"
+    )
 
-# Run Flask app
+# /pollresults command
+@app.command("/pollresults")
+def show_poll_results(ack, body, client):
+    ack()
+    user_id = body["user_id"]
+    channel_id = body["channel_id"]
+
+    if not poll_data["question"]:
+        client.chat_postEphemeral(
+            channel=channel_id,
+            user=user_id,
+            text="❗ No active poll found. Use `/poll` to start one."
+        )
+        return
+
+    results = f"*📊 Results for:* {poll_data['question']}\n"
+    for i, option in enumerate(poll_data["options"]):
+        count = poll_data["tallies"].get(i, 0)
+        results += f"- {option}: {count} vote(s)\n"
+
+    client.chat_postEphemeral(
+        channel=channel_id,
+        user=user_id,
+        text=results
+    )
+
+# Local or Render run
 if __name__ == "__main__":
-    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 3000)))
+    port = int(os.environ.get("PORT", 3000))
+    flask_app.run(host="0.0.0.0", port=port)
+
 
 
