@@ -5,23 +5,32 @@ from flask import Flask, request
 from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
 
-# Initialize Slack app and Flask app
-app = App(token=os.environ["SLACK_BOT_TOKEN"], signing_secret=os.environ["SLACK_SIGNING_SECRET"])
+# Flask and Slack app initialization
 flask_app = Flask(__name__)
+app = App(token=os.environ["SLACK_BOT_TOKEN"], signing_secret=os.environ["SLACK_SIGNING_SECRET"])
 handler = SlackRequestHandler(app)
 
-# In-memory store for polls
-polls = {}
+# In-memory poll data
+poll_data = {
+    "question": None,
+    "options": [],
+    "votes": {},
+    "tallies": {},
+    "creator_id": None,
+    "active": False
+}
 
 @app.command("/poll")
-def handle_poll_command(ack, body, client):
+def open_poll_modal(ack, body, client):
     ack()
     trigger_id = body["trigger_id"]
+    user_id = body["user_id"]
     client.views_open(
         trigger_id=trigger_id,
         view={
             "type": "modal",
             "callback_id": "submit_poll",
+            "private_metadata": user_id,
             "title": {"type": "plain_text", "text": "Create a Poll"},
             "submit": {"type": "plain_text", "text": "Post Poll"},
             "blocks": [
@@ -46,57 +55,148 @@ def handle_poll_command(ack, body, client):
     )
 
 @app.view("submit_poll")
-def handle_poll_submission(ack, body, client):
+def handle_poll_submission(ack, body, view, client):
     ack()
     user_id = body["user"]["id"]
-    state_values = body["view"]["state"]["values"]
+    channel_id = body["view"]["private_metadata"]
+    state_values = view["state"]["values"]
 
     question = state_values["question_block"]["question_input"]["value"]
     options = []
     for i in range(5):
-        key = f"option_block_{i}"
-        action = f"option_input_{i}"
-        if key in state_values and action in state_values[key]:
-            val = state_values[key][action]["value"]
+        block_id = f"option_block_{i}"
+        action_id = f"option_input_{i}"
+        if block_id in state_values and action_id in state_values[block_id]:
+            val = state_values[block_id][action_id]["value"]
             if val:
                 options.append(val)
 
-    if not question or len(options) < 2:
+    if len(options) < 2:
         return
 
-    message_blocks = [
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*{question}*"}},
-        {"type": "divider"},
+    # Save poll state
+    poll_data["question"] = question
+    poll_data["options"] = options
+    poll_data["votes"] = {}
+    poll_data["tallies"] = {i: 0 for i in range(len(options))}
+    poll_data["creator_id"] = user_id
+    poll_data["active"] = True
+
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*📊 {question}*"}},
+        {"type": "actions",
+         "elements": [
+             {
+                 "type": "button",
+                 "text": {"type": "plain_text", "text": option},
+                 "value": str(i),
+                 "action_id": f"vote_{i}"
+             } for i, option in enumerate(options)
+         ]}
     ]
-    for idx, opt in enumerate(options):
-        message_blocks.append({
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": f":{['one','two','three','four','five'][idx]}: {opt}"}
-        })
 
-    # Post poll in the channel where command was invoked
-    channel_id = body["view"]["private_metadata"] if "private_metadata" in body["view"] else user_id
-    client.chat_postMessage(channel=channel_id, blocks=message_blocks, text=question)
+    client.chat_postMessage(channel=channel_id, text=question, blocks=blocks)
 
-    # Confirm to the user privately
     try:
-        client.chat_postMessage(
-            channel=user_id,
-            text="✅ Your poll has been posted."
-        )
+        im = client.conversations_open(users=user_id)
+        dm_channel = im["channel"]["id"]
+        client.chat_postMessage(channel=dm_channel, text="✅ Your poll has been posted.")
     except Exception as e:
         print(f"Error sending poll confirmation: {e}")
 
-# Slack events route
+@app.action(re.compile("^vote_\d$"))
+def handle_vote(ack, body, action, client):
+    ack()
+    if not poll_data["active"]:
+        client.chat_postEphemeral(
+            channel=body["channel"]["id"],
+            user=body["user"]["id"],
+            text="❌ This poll has been closed."
+        )
+        return
+
+    user_id = body["user"]["id"]
+    channel_id = body["channel"]["id"]
+    option_index = int(action["action_id"].split("_")[1])
+
+    if user_id in poll_data["votes"]:
+        client.chat_postEphemeral(
+            channel=channel_id,
+            user=user_id,
+            text="✅ You’ve already voted!"
+        )
+        return
+
+    poll_data["votes"][user_id] = option_index
+    poll_data["tallies"][option_index] += 1
+
+    results = f"🗳 Vote recorded for *{poll_data['options'][option_index]}*
+
+*📊 Current Results:*
+"
+    for i, option in enumerate(poll_data["options"]):
+        results += f"- {option}: {poll_data['tallies'].get(i, 0)} vote(s)
+"
+
+    client.chat_postEphemeral(
+        channel=channel_id,
+        user=user_id,
+        text=results
+    )
+
+@app.command("/pollresults")
+def show_poll_results(ack, body, client):
+    ack()
+    channel_id = body["channel_id"]
+    user_id = body["user_id"]
+
+    if not poll_data["question"]:
+        client.chat_postEphemeral(channel=channel_id, user=user_id,
+                                  text="❗ No active poll found.")
+        return
+
+    results = f"*📊 Results for:* {poll_data['question']}
+"
+    for i, option in enumerate(poll_data["options"]):
+        results += f"- {option}: {poll_data['tallies'].get(i, 0)} vote(s)
+"
+
+    client.chat_postEphemeral(channel=channel_id, user=user_id, text=results)
+
+@app.command("/closepoll")
+def close_poll(ack, body, client):
+    ack()
+    user_id = body["user_id"]
+    channel_id = body["channel_id"]
+
+    if poll_data.get("creator_id") != user_id:
+        client.chat_postEphemeral(channel=channel_id, user=user_id,
+                                  text="❌ Only the poll creator can close the poll.")
+        return
+
+    poll_data["active"] = False
+
+    results = f"✅ Poll *'{poll_data['question']}'* has been closed.
+
+*Final Results:*
+"
+    for i, option in enumerate(poll_data["options"]):
+        results += f"- {option}: {poll_data['tallies'].get(i, 0)} vote(s)
+"
+
+    client.chat_postMessage(channel=channel_id, text=results)
+
+# Slack route
 @flask_app.route("/slack/events", methods=["POST"])
 def slack_events():
     return handler.handle(request)
 
-# App root route (optional)
+# Health check
 @flask_app.route("/", methods=["GET"])
-def home():
-    return "HFC Survey Bot is running!"
+def index():
+    return "✅ HFC Slack Bot is running."
 
-# Run the Flask app
+# Run app
 if __name__ == "__main__":
     flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 3000)))
+
