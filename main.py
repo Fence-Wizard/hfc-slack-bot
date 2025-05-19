@@ -27,15 +27,17 @@ handler = SlackRequestHandler(app)
 
 # ─── In‐memory store ────────────────────────────────────────────────────────────
 poll_data = {
-    "type": None,               
-    "question": None,           
-    "options": [],              
-    "feedback_questions": [],   
+    "type": None,
+    "question": None,
+    "options": [],
+    "feedback_questions": [],
+    "feedback_format": "paragraph",
     "votes": {},
     "tallies": {},
-    "feedback_responses": [],   
+    "feedback_responses": [],
     "creator_id": None,
     "channel_id": None,
+    "anonymous": True,
     "active": False,
 }
 
@@ -81,6 +83,19 @@ def open_poll_modal(ack, body, client):
                             "text": "Type the main question or prompt here"
                         }
                     }
+                },
+                {
+                    "type": "input",
+                    "block_id": "visibility_block",
+                    "label": {"type": "plain_text", "text": "Results Visibility"},
+                    "element": {
+                        "type": "static_select",
+                        "action_id": "visibility_select",
+                        "options": [
+                            {"text": {"type": "plain_text", "text": "Anonymous"}, "value": "anonymous"},
+                            {"text": {"type": "plain_text", "text": "Public"}, "value": "public"}
+                        ]
+                    }
                 }
             ]
         }
@@ -96,7 +111,8 @@ def handle_poll_step1(ack, body, view, client):
     state = view["state"]["values"]
     p_type = state["type_block"]["poll_type"]["selected_option"]["value"]
     title = state["question_block"]["question_input"]["value"]
-    meta = json.dumps({"channel": channel_id, "user": creator_id, "type": p_type, "title": title})
+    visibility = state["visibility_block"]["visibility_select"]["selected_option"]["value"]
+    meta = json.dumps({"channel": channel_id, "user": creator_id, "type": p_type, "title": title, "visibility": visibility})
 
     if p_type == "vote":
         blocks = [
@@ -117,7 +133,20 @@ def handle_poll_step1(ack, body, view, client):
         ]
     else:
         blocks = [
-            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*\nAdd up to 5 questions."}}
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*\nAdd up to 5 questions."}},
+            {
+                "type": "input",
+                "block_id": "format_block",
+                "label": {"type": "plain_text", "text": "Feedback Format"},
+                "element": {
+                    "type": "static_select",
+                    "action_id": "format_select",
+                    "options": [
+                        {"text": {"type": "plain_text", "text": "Paragraph"}, "value": "paragraph"},
+                        {"text": {"type": "plain_text", "text": "Stars 1-5"}, "value": "stars"}
+                    ]
+                }
+            }
         ] + [
             {
                 "type": "input",
@@ -153,10 +182,12 @@ def handle_poll_submission(ack, body, view, client):
     creator_id = info["user"]
     p_type = info["type"]
     title = info["title"]
+    visibility = info.get("visibility", "anonymous")
     state = view["state"]["values"]
 
     # collect
     opts, fqs = [], []
+    f_format = "paragraph"
     for i in range(5):
         val = state.get(f"option_block_{i}", {})\
                    .get(f"option_input_{i}", {})\
@@ -169,6 +200,10 @@ def handle_poll_submission(ack, body, view, client):
                  .get("value")
         if q and p_type == "feedback":
             fqs.append(q)
+    if p_type == "feedback":
+        sel = state.get("format_block", {}).get("format_select", {}).get("selected_option")
+        if sel:
+            f_format = sel["value"]
 
     # validation
     if p_type == "vote" and len(opts) < 2:
@@ -192,11 +227,13 @@ def handle_poll_submission(ack, body, view, client):
         "question": title,
         "options": opts,
         "feedback_questions": fqs,
+        "feedback_format": f_format,
         "votes": {},
         "tallies": {i: 0 for i in range(len(opts))},
         "feedback_responses": [],
         "creator_id": creator_id,
         "channel_id": channel_id,
+        "anonymous": visibility == "anonymous",
         "active": True,
     })
 
@@ -283,22 +320,34 @@ def open_feedback_modal(ack, body, client):
           "type": "section",
           "text": {"type": "mrkdwn", "text": "*Please answer the following:*"}
         }
-    ] + [
-        {
-          "type": "input",
-          "block_id": f"resp_block_{i}",
-          "label": {"type": "plain_text", "text": q},
-          "element": {
-              "type": "plain_text_input",
-              "action_id": f"resp_input_{i}",
-              "placeholder": {
-                  "type": "plain_text",
-                  "text": "Your answer here"
-              }
-          }
-        }
-        for i, q in enumerate(questions)
     ]
+
+    for i, q in enumerate(questions):
+        if poll_data.get("feedback_format") == "stars":
+            element = {
+                "type": "static_select",
+                "action_id": f"resp_input_{i}",
+                "options": [
+                    {"text": {"type": "plain_text", "text": "⭐"}, "value": "1"},
+                    {"text": {"type": "plain_text", "text": "⭐⭐"}, "value": "2"},
+                    {"text": {"type": "plain_text", "text": "⭐⭐⭐"}, "value": "3"},
+                    {"text": {"type": "plain_text", "text": "⭐⭐⭐⭐"}, "value": "4"},
+                    {"text": {"type": "plain_text", "text": "⭐⭐⭐⭐⭐"}, "value": "5"}
+                ]
+            }
+        else:
+            element = {
+                "type": "plain_text_input",
+                "action_id": f"resp_input_{i}",
+                "placeholder": {"type": "plain_text", "text": "Your answer here"}
+            }
+
+        blocks.append({
+            "type": "input",
+            "block_id": f"resp_block_{i}",
+            "label": {"type": "plain_text", "text": q},
+            "element": element
+        })
 
     client.views_open(
         trigger_id=trigger_id,
@@ -320,7 +369,10 @@ def handle_feedback_submission(ack, body, view, client):
     answers = []
 
     for i in range(len(poll_data["feedback_questions"])):
-        ans = state[f"resp_block_{i}"][f"resp_input_{i}"]["value"]
+        if poll_data.get("feedback_format") == "stars":
+            ans = state[f"resp_block_{i}"][f"resp_input_{i}"]["selected_option"]["value"]
+        else:
+            ans = state[f"resp_block_{i}"][f"resp_input_{i}"]["value"]
         answers.append(ans)
 
     poll_data["feedback_responses"].append({
@@ -350,14 +402,37 @@ def show_poll_results(ack, body, client):
 
     if poll_data["type"] == "vote":
         text = f"*📊 Results for:* {poll_data['question']}\n"
+        total = sum(poll_data["tallies"].values())
+        max_votes = max(poll_data["tallies"].values()) if total else 0
         for i, opt in enumerate(poll_data["options"]):
-            text += f"• {opt}: {poll_data['tallies'][i]}\n"
+            tally = poll_data["tallies"][i]
+            pct = int(round((tally / total) * 100)) if total else 0
+            line = f"• {opt}: {tally} ({pct}%)"
+            if tally == max_votes and total:
+                line = f"*{line}*"
+            text += line + "\n"
+        if not poll_data.get("anonymous"):
+            text += "\nVotes:\n"
+            for user, choice in poll_data["votes"].items():
+                text += f"• <@{user}> → {poll_data['options'][choice]}\n"
     else:
         text = f"*✏️ Feedback for:* {poll_data['question']}\n"
-        for resp in poll_data["feedback_responses"]:
-            text += f"\n— <@{resp['user']}>'s answers:\n"
-            for q, a in zip(poll_data["feedback_questions"], resp["answers"]):
-                text += f"    • *{q}*: {a}\n"
+        if poll_data.get("anonymous"):
+            if poll_data.get("feedback_format") == "stars":
+                for idx, q in enumerate(poll_data["feedback_questions"]):
+                    vals = [int(r["answers"][idx]) for r in poll_data["feedback_responses"]]
+                    avg = sum(vals) / len(vals) if vals else 0
+                    text += f"• *{q}*: average {avg:.1f}/5\n"
+            else:
+                for idx, q in enumerate(poll_data["feedback_questions"]):
+                    text += f"\n*{q}*\n"
+                    for resp in poll_data["feedback_responses"]:
+                        text += f"    • {resp['answers'][idx]}\n"
+        else:
+            for resp in poll_data["feedback_responses"]:
+                text += f"\n— <@{resp['user']}>'s answers:\n"
+                for q, a in zip(poll_data["feedback_questions"], resp["answers"]):
+                    text += f"    • *{q}*: {a}\n"
 
     client.chat_postEphemeral(channel=ch, user=usr, text=text)
 
@@ -386,14 +461,37 @@ def close_poll(ack, body, client):
     poll_data["active"] = False
     if poll_data["type"] == "vote":
         final = f"✅ Poll *{poll_data['question']}* closed. Final results:\n"
+        total = sum(poll_data["tallies"].values())
+        max_votes = max(poll_data["tallies"].values()) if total else 0
         for i, opt in enumerate(poll_data["options"]):
-            final += f"• {opt}: {poll_data['tallies'][i]}\n"
+            tally = poll_data["tallies"][i]
+            pct = int(round((tally / total) * 100)) if total else 0
+            line = f"• {opt}: {tally} ({pct}%)"
+            if tally == max_votes and total:
+                line = f"*{line}*"
+            final += line + "\n"
+        if not poll_data.get("anonymous"):
+            final += "\nVotes:\n"
+            for user, choice in poll_data["votes"].items():
+                final += f"• <@{user}> → {poll_data['options'][choice]}\n"
     else:
         final = f"✅ Feedback poll *{poll_data['question']}* closed. Collected feedback:\n"
-        for resp in poll_data["feedback_responses"]:
-            final += f"\n— <@{resp['user']}>'s answers:\n"
-            for q, a in zip(poll_data["feedback_questions"], resp["answers"]):
-                final += f"    • *{q}*: {a}\n"
+        if poll_data.get("anonymous"):
+            if poll_data.get("feedback_format") == "stars":
+                for idx, q in enumerate(poll_data["feedback_questions"]):
+                    vals = [int(r["answers"][idx]) for r in poll_data["feedback_responses"]]
+                    avg = sum(vals) / len(vals) if vals else 0
+                    final += f"• *{q}*: average {avg:.1f}/5\n"
+            else:
+                for idx, q in enumerate(poll_data["feedback_questions"]):
+                    final += f"\n*{q}*\n"
+                    for resp in poll_data["feedback_responses"]:
+                        final += f"    • {resp['answers'][idx]}\n"
+        else:
+            for resp in poll_data["feedback_responses"]:
+                final += f"\n— <@{resp['user']}>'s answers:\n"
+                for q, a in zip(poll_data["feedback_questions"], resp["answers"]):
+                    final += f"    • *{q}*: {a}\n"
 
     client.chat_postMessage(channel=ch, text=final)
 
