@@ -5,10 +5,22 @@ from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
 
 # ─── App setup ────────────────────────────────────────────────────────────────
+token = os.getenv("SLACK_BOT_TOKEN")
+secret = os.getenv("SLACK_SIGNING_SECRET")
+
+if token is None or secret is None:
+    missing = []
+    if token is None:
+        missing.append("SLACK_BOT_TOKEN")
+    if secret is None:
+        missing.append("SLACK_SIGNING_SECRET")
+    print(f"Error: Missing required environment variables: {', '.join(missing)}")
+    raise SystemExit(1)
+
 flask_app = Flask(__name__)
 app = App(
-    token=os.environ["SLACK_BOT_TOKEN"],
-    signing_secret=os.environ["SLACK_SIGNING_SECRET"],
+    token=token,
+    signing_secret=secret,
 )
 handler = SlackRequestHandler(app)
 
