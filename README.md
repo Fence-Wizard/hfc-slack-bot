@@ -32,3 +32,9 @@ gunicorn main:flask_app
 ```
 
 The bot will listen for events from Slack as configured in your Slack App.
+
+## Feedback Format Options
+
+When creating a feedback poll, each question can now be configured individually
+to collect answers as free-form paragraphs or as a 1–5 ranking. Select the
+desired format for each question in the creation modal.
