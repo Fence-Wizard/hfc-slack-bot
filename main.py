@@ -142,11 +142,11 @@ def handle_poll_submission(ack, body, view, client):
 
     # validation
     if p_type == "vote" and len(opts) < 2:
-        client.chat_postEphemeral(channel=creator_id, user=creator_id,
+        client.chat_postEphemeral(channel=channel_id, user=creator_id,
                                   text="❌ You must provide at least *2* vote options.")
         return
     if p_type == "feedback" and len(fqs) < 1:
-        client.chat_postEphemeral(channel=creator_id, user=creator_id,
+        client.chat_postEphemeral(channel=channel_id, user=creator_id,
                                   text="❌ You must provide at least *1* feedback question.")
         return
 
