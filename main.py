@@ -1,5 +1,6 @@
 import os
 import re
+import json
 from flask import Flask, request
 from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
@@ -29,26 +30,20 @@ poll_data = {
 # ─── /poll ────────────────────────────────────────────────────────────────────
 @app.command("/poll")
 def open_poll_modal(ack, body, client):
+    """Begin poll creation by selecting type and title."""
     ack()
     trigger_id = body["trigger_id"]
-    metadata = f"{body['channel_id']}|{body['user_id']}"
+    metadata = json.dumps({"channel": body["channel_id"], "user": body["user_id"]})
 
     client.views_open(
         trigger_id=trigger_id,
         view={
             "type": "modal",
-            "callback_id": "submit_poll",
+            "callback_id": "poll_step1",
             "private_metadata": metadata,
             "title": {"type": "plain_text", "text": "Create a Poll"},
-            "submit": {"type": "plain_text", "text": "Post Poll"},
+            "submit": {"type": "plain_text", "text": "Next"},
             "blocks": [
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": "*Choose your poll type and fill in the fields below.*"
-                    }
-                },
                 {
                     "type": "input",
                     "block_id": "type_block",
@@ -57,7 +52,7 @@ def open_poll_modal(ack, body, client):
                         "type": "static_select",
                         "action_id": "poll_type",
                         "options": [
-                            {"text": {"type": "plain_text", "text": "Vote"},     "value": "vote"},
+                            {"text": {"type": "plain_text", "text": "Vote"}, "value": "vote"},
                             {"text": {"type": "plain_text", "text": "Feedback"}, "value": "feedback"},
                         ]
                     }
@@ -74,56 +69,79 @@ def open_poll_modal(ack, body, client):
                             "text": "Type the main question or prompt here"
                         }
                     }
-                },
-                # Vote options
-                *[
-                    {
-                        "type": "input",
-                        "block_id": f"option_block_{i}",
-                        "optional": True,
-                        "label": {"type": "plain_text", "text": f"Option {i+1}"},
-                        "element": {
-                            "type": "plain_text_input",
-                            "action_id": f"option_input_{i}",
-                            "placeholder": {
-                                "type": "plain_text",
-                                "text": "Type option text here"
-                            }
-                        }
-                    }
-                    for i in range(5)
-                ],
-                # Feedback questions
-                *[
-                    {
-                        "type": "input",
-                        "block_id": f"feedback_q_block_{i}",
-                        "optional": True,
-                        "label": {"type": "plain_text", "text": f"Feedback Question {i+1}"},
-                        "element": {
-                            "type": "plain_text_input",
-                            "action_id": f"feedback_q_input_{i}",
-                            "placeholder": {
-                                "type": "plain_text",
-                                "text": "Type your question here"
-                            }
-                        }
-                    }
-                    for i in range(5)
-                ],
+                }
             ]
         }
     )
 
+@app.view("poll_step1")
+def handle_poll_step1(ack, body, view, client):
+    """Show appropriate fields based on poll type."""
+    ack()
+    info = json.loads(view["private_metadata"])
+    channel_id = info["channel"]
+    creator_id = info["user"]
+    state = view["state"]["values"]
+    p_type = state["type_block"]["poll_type"]["selected_option"]["value"]
+    title = state["question_block"]["question_input"]["value"]
+    meta = json.dumps({"channel": channel_id, "user": creator_id, "type": p_type, "title": title})
+
+    if p_type == "vote":
+        blocks = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*\nProvide up to 5 options."}}
+        ] + [
+            {
+                "type": "input",
+                "block_id": f"option_block_{i}",
+                "optional": True,
+                "label": {"type": "plain_text", "text": f"Option {i+1}"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": f"option_input_{i}",
+                    "placeholder": {"type": "plain_text", "text": "Type option text here"}
+                }
+            }
+            for i in range(5)
+        ]
+    else:
+        blocks = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*\nAdd up to 5 questions."}}
+        ] + [
+            {
+                "type": "input",
+                "block_id": f"feedback_q_block_{i}",
+                "optional": True,
+                "label": {"type": "plain_text", "text": f"Question {i+1}"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": f"feedback_q_input_{i}",
+                    "placeholder": {"type": "plain_text", "text": "Type your question here"}
+                }
+            }
+            for i in range(5)
+        ]
+
+    client.views_open(
+        trigger_id=body["trigger_id"],
+        view={
+            "type": "modal",
+            "callback_id": "submit_poll",
+            "private_metadata": meta,
+            "title": {"type": "plain_text", "text": "Create a Poll"},
+            "submit": {"type": "plain_text", "text": "Post Poll"},
+            "blocks": blocks
+        }
+    )
 # ─── Submit Poll ───────────────────────────────────────────────────────────────
 @app.view("submit_poll")
 def handle_poll_submission(ack, body, view, client):
     ack()
-    channel_id, creator_id = view["private_metadata"].split("|")
+    info = json.loads(view["private_metadata"])
+    channel_id = info["channel"]
+    creator_id = info["user"]
+    p_type = info["type"]
+    title = info["title"]
     state = view["state"]["values"]
-
-    p_type = state["type_block"]["poll_type"]["selected_option"]["value"]
-    title  = state["question_block"]["question_input"]["value"]
 
     # collect
     opts, fqs = [], []
