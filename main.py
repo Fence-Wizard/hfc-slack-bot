@@ -142,12 +142,18 @@ def handle_poll_submission(ack, body, view, client):
 
     # validation
     if p_type == "vote" and len(opts) < 2:
-        client.chat_postEphemeral(channel=creator_id, user=creator_id,
-                                  text="❌ You must provide at least *2* vote options.")
+        client.chat_postEphemeral(
+            channel=channel_id,
+            user=creator_id,
+            text="❌ You must provide at least *2* vote options."
+        )
         return
     if p_type == "feedback" and len(fqs) < 1:
-        client.chat_postEphemeral(channel=creator_id, user=creator_id,
-                                  text="❌ You must provide at least *1* feedback question.")
+        client.chat_postEphemeral(
+            channel=channel_id,
+            user=creator_id,
+            text="❌ You must provide at least *1* feedback question."
+        )
         return
 
     # store
@@ -331,9 +337,18 @@ def close_poll(ack, body, client):
     ack()
     usr, ch = body["user_id"], body["channel_id"]
 
+    if not poll_data["active"]:
+        client.chat_postEphemeral(
+            channel=ch,
+            user=usr,
+            text="❗ No active poll to close."
+        )
+        return
+
     if poll_data["creator_id"] != usr:
         client.chat_postEphemeral(
-            channel=ch, user=usr,
+            channel=ch,
+            user=usr,
             text="❌ Only the poll creator can close it."
         )
         return
