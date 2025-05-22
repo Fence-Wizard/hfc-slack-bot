@@ -33,6 +33,12 @@ gunicorn main:flask_app
 
 The bot will listen for events from Slack as configured in your Slack App.
 
+When deployed on Render's free tier, the process is automatically spun down
+after periods of inactivity. A simple `/` endpoint is available for health
+checks, which returns `✅ HFC Slack Bot is running.` If you require constant
+uptime, you may need to periodically ping this endpoint, subject to Render's
+Terms of Service.
+
 ## Feedback Format Options
 
 When creating a feedback poll, each question can now be configured individually
