@@ -38,6 +38,7 @@ poll_data = {
     "creator_id": None,
     "channel_id": None,
     "anonymous": True,
+    "multi": False,
     "active": False,
 }
 
@@ -104,7 +105,6 @@ def open_poll_modal(ack, body, client):
 @app.view("poll_step1")
 def handle_poll_step1(ack, body, view, client):
     """Show appropriate fields based on poll type."""
-    ack()
     info = json.loads(view["private_metadata"])
     channel_id = info["channel"]
     creator_id = info["user"]
@@ -131,6 +131,22 @@ def handle_poll_step1(ack, body, view, client):
             }
             for i in range(5)
         ]
+        blocks.append({
+            "type": "input",
+            "block_id": "multi_block",
+            "optional": True,
+            "label": {"type": "plain_text", "text": "Allow multiple selections?"},
+            "element": {
+                "type": "checkboxes",
+                "action_id": "multi_select",
+                "options": [
+                    {
+                        "text": {"type": "plain_text", "text": "Users can select multiple options"},
+                        "value": "allow_multi"
+                    }
+                ]
+            }
+        })
     else:
         blocks = [
             {"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*\nAdd up to 5 questions."}}
@@ -164,16 +180,16 @@ def handle_poll_step1(ack, body, view, client):
                 }
             ])
 
-    client.views_open(
-        trigger_id=body["trigger_id"],
+    ack(
+        response_action="update",
         view={
             "type": "modal",
             "callback_id": "submit_poll",
             "private_metadata": meta,
             "title": {"type": "plain_text", "text": "Create a Poll"},
             "submit": {"type": "plain_text", "text": "Post Poll"},
-            "blocks": blocks
-        }
+            "blocks": blocks,
+        },
     )
 # ─── Submit Poll ───────────────────────────────────────────────────────────────
 @app.view("submit_poll")
@@ -221,6 +237,11 @@ def handle_poll_submission(ack, body, view, client):
         )
         return
 
+    allow_multi = False
+    if p_type == "vote":
+        sel_opts = state.get("multi_block", {}).get("multi_select", {}).get("selected_options")
+        allow_multi = bool(sel_opts)
+
     # store
     poll_data.update({
         "type": p_type,
@@ -234,6 +255,7 @@ def handle_poll_submission(ack, body, view, client):
         "creator_id": creator_id,
         "channel_id": channel_id,
         "anonymous": visibility == "anonymous",
+        "multi": allow_multi,
         "active": True,
     })
 
@@ -293,12 +315,20 @@ def handle_vote(ack, body, action, client):
     choice = int(action["action_id"].split("_")[1])
     ch   = body["channel"]["id"]
 
-    if user in poll_data["votes"]:
-        client.chat_postEphemeral(channel=ch, user=user,
-            text="✅ You’ve already voted!")
-        return
+    if poll_data.get("multi"):
+        choices = poll_data["votes"].setdefault(user, set())
+        if choice in choices:
+            client.chat_postEphemeral(channel=ch, user=user,
+                text="✅ You’ve already voted for this option!")
+            return
+        choices.add(choice)
+    else:
+        if user in poll_data["votes"]:
+            client.chat_postEphemeral(channel=ch, user=user,
+                text="✅ You’ve already voted!")
+            return
+        poll_data["votes"][user] = choice
 
-    poll_data["votes"][user] = choice
     poll_data["tallies"][choice] += 1
 
     rpt = f"🗳 Vote recorded for *{poll_data['options'][choice]}*\n\n*📊 Current Results:*"
@@ -416,7 +446,11 @@ def show_poll_results(ack, body, client):
         if not poll_data.get("anonymous"):
             text += "\nVotes:\n"
             for user, choice in poll_data["votes"].items():
-                text += f"• <@{user}> → {poll_data['options'][choice]}\n"
+                if poll_data.get("multi"):
+                    opts = ", ".join(poll_data['options'][c] for c in sorted(choice))
+                    text += f"• <@{user}> → {opts}\n"
+                else:
+                    text += f"• <@{user}> → {poll_data['options'][choice]}\n"
     else:
         text = f"*✏️ Feedback for:* {poll_data['question']}\n"
         if poll_data.get("anonymous"):
@@ -479,7 +513,11 @@ def close_poll(ack, body, client):
         if not poll_data.get("anonymous"):
             final += "\nVotes:\n"
             for user, choice in poll_data["votes"].items():
-                final += f"• <@{user}> → {poll_data['options'][choice]}\n"
+                if poll_data.get("multi"):
+                    opts = ", ".join(poll_data['options'][c] for c in sorted(choice))
+                    final += f"• <@{user}> → {opts}\n"
+                else:
+                    final += f"• <@{user}> → {poll_data['options'][choice]}\n"
     else:
         final = f"✅ Feedback poll *{poll_data['question']}* closed. Collected feedback:\n"
         if poll_data.get("anonymous"):

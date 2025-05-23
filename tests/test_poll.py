@@ -2,9 +2,12 @@ import importlib
 import sys
 import types
 import os
+import json
 import pytest
 
 class FakeApp:
+    def __init__(self, *args, **kwargs):
+        pass
     def command(self, *args, **kwargs):
         def decorator(func):
             return func
@@ -18,6 +21,14 @@ class FakeApp:
             return func
         return decorator
 
+class DummyFlask:
+    def __init__(self, *args, **kwargs):
+        pass
+    def route(self, *args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
 class FakeHandler:
     def __init__(self, app):
         self.app = app
@@ -25,7 +36,7 @@ class FakeHandler:
 @pytest.fixture
 def main_module(monkeypatch):
     # stub external modules required by main
-    fake_flask = types.SimpleNamespace(Flask=lambda *a, **k: object(), request=None)
+    fake_flask = types.SimpleNamespace(Flask=DummyFlask, request=None)
     fake_bolt = types.SimpleNamespace(App=FakeApp)
     fake_adapter_flask = types.SimpleNamespace(SlackRequestHandler=lambda app: FakeHandler(app))
     fake_bolt_adapter = types.SimpleNamespace(flask=fake_adapter_flask)
@@ -37,6 +48,9 @@ def main_module(monkeypatch):
 
     monkeypatch.setenv('SLACK_BOT_TOKEN', 'x')
     monkeypatch.setenv('SLACK_SIGNING_SECRET', 'y')
+
+    root_path = os.path.dirname(os.path.dirname(__file__))
+    monkeypatch.syspath_prepend(root_path)
 
     if 'main' in sys.modules:
         del sys.modules['main']
@@ -56,6 +70,7 @@ def poll_setup(main_module):
         'feedback_responses': [],
         'creator_id': 'Ucreator',
         'channel_id': 'C1',
+        'multi': False,
         'active': True,
     })
     return pd
@@ -87,4 +102,46 @@ def test_handle_vote_records_and_rejects(main_module, poll_setup):
     assert poll_setup['tallies'][1] == 1  # unchanged
     assert client.messages[-1]['text'] == '✅ You\u2019ve already voted!'
     assert len(ack_calls) == 2
+
+
+def test_handle_vote_multi_allows_multiple(main_module, poll_setup):
+    poll_setup['multi'] = True
+    client = MockSlackClient()
+    def ack():
+        pass
+
+    body = {'channel': {'id': 'C1'}, 'user': {'id': 'U1'}}
+    action0 = {'action_id': 'vote_0'}
+    action1 = {'action_id': 'vote_1'}
+
+    main_module.handle_vote(ack, body, action0, client)
+    main_module.handle_vote(ack, body, action1, client)
+
+    assert poll_setup['tallies'][0] == 1
+    assert poll_setup['tallies'][1] == 1
+    assert poll_setup['votes']['U1'] == {0, 1}
+
+
+def test_handle_poll_step1_ack_update(main_module):
+    payloads = []
+    def ack(**kwargs):
+        payloads.append(kwargs)
+
+    body = {'trigger_id': 'T1'}
+    view = {
+        'private_metadata': json.dumps({'channel': 'C1', 'user': 'U1'}),
+        'state': {
+            'values': {
+                'type_block': {'poll_type': {'selected_option': {'value': 'vote'}}},
+                'question_block': {'question_input': {'value': 'Q'}},
+                'visibility_block': {'visibility_select': {'selected_option': {'value': 'public'}}},
+            }
+        }
+    }
+
+    main_module.handle_poll_step1(ack, body, view, client=object())
+
+    assert payloads
+    assert payloads[0]['response_action'] == 'update'
+    assert payloads[0]['view']['callback_id'] == 'submit_poll'
 
