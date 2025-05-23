@@ -44,3 +44,9 @@ Terms of Service.
 When creating a feedback poll, each question can now be configured individually
 to collect answers as free-form paragraphs or as a 1–5 ranking. Select the
 desired format for each question in the creation modal.
+
+## Multiple Selections
+
+When creating a vote poll, you can optionally allow participants to choose more
+than one option. In the second step of poll creation, check the *Allow multiple
+selections?* box before posting the poll.
