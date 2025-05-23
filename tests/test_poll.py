@@ -2,6 +2,7 @@ import importlib
 import sys
 import types
 import os
+import json
 import pytest
 
 class FakeApp:
@@ -120,3 +121,25 @@ def test_handle_vote_multi_allows_multiple(main_module, poll_setup):
     assert poll_setup['tallies'][1] == 1
     assert poll_setup['votes']['U1'] == {0, 1}
 
+def test_handle_poll_step1_ack_update(main_module):
+    payloads = []
+    def ack(**kwargs):
+        payloads.append(kwargs)
+
+    body = {'trigger_id': 'T1'}
+    view = {
+        'private_metadata': json.dumps({'channel': 'C1', 'user': 'U1'}),
+        'state': {
+            'values': {
+                'type_block': {'poll_type': {'selected_option': {'value': 'vote'}}},
+                'question_block': {'question_input': {'value': 'Q'}},
+                'visibility_block': {'visibility_select': {'selected_option': {'value': 'public'}}},
+            }
+        }
+    }
+
+    main_module.handle_poll_step1(ack, body, view, client=object())
+
+    assert payloads
+    assert payloads[0]['response_action'] == 'update'
+    assert payloads[0]['view']['callback_id'] == 'submit_poll'

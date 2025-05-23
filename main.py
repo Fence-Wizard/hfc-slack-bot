@@ -105,7 +105,6 @@ def open_poll_modal(ack, body, client):
 @app.view("poll_step1")
 def handle_poll_step1(ack, body, view, client):
     """Show appropriate fields based on poll type."""
-    ack()
     info = json.loads(view["private_metadata"])
     channel_id = info["channel"]
     creator_id = info["user"]
@@ -181,16 +180,16 @@ def handle_poll_step1(ack, body, view, client):
                 }
             ])
 
-    client.views_open(
-        trigger_id=body["trigger_id"],
+    ack(
+        response_action="update",
         view={
             "type": "modal",
             "callback_id": "submit_poll",
             "private_metadata": meta,
             "title": {"type": "plain_text", "text": "Create a Poll"},
             "submit": {"type": "plain_text", "text": "Post Poll"},
-            "blocks": blocks
-        }
+            "blocks": blocks,
+        },
     )
 # ─── Submit Poll ───────────────────────────────────────────────────────────────
 @app.view("submit_poll")
