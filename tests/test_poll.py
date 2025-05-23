@@ -121,7 +121,6 @@ def test_handle_vote_multi_allows_multiple(main_module, poll_setup):
     assert poll_setup['tallies'][1] == 1
     assert poll_setup['votes']['U1'] == {0, 1}
 
-
 def test_handle_poll_step1_ack_update(main_module):
     payloads = []
     def ack(**kwargs):
@@ -144,4 +143,3 @@ def test_handle_poll_step1_ack_update(main_module):
     assert payloads
     assert payloads[0]['response_action'] == 'update'
     assert payloads[0]['view']['callback_id'] == 'submit_poll'
-
