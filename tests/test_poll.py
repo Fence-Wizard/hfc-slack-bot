@@ -141,8 +141,8 @@ def test_handle_poll_step1_ack_update(main_module):
     main_module.handle_poll_step1(ack, body, view, client=object())
 
     assert payloads
-    assert payloads[0]['response_action'] == 'update'
-    assert payloads[0]['view']['callback_id'] == 'submit_poll'
+    assert payloads[-1]['response_action'] == 'update'
+    assert payloads[-1]['view']['callback_id'] == 'submit_poll'
 
 
 def test_handle_poll_step1_blended(main_module):
@@ -166,4 +166,28 @@ def test_handle_poll_step1_blended(main_module):
 
     assert payloads
     assert payloads[0]['response_action'] == 'update'
-    assert payloads[0]['view']['callback_id'] == 'submit_poll'
+    assert payloads[0]['view']['callback_id'] == 'poll_step2'
+
+
+def test_handle_poll_step2_ack_update(main_module):
+    payloads = []
+    def ack(**kwargs):
+        payloads.append(kwargs)
+
+    meta = {'channel': 'C1', 'user': 'U1', 'type': 'feedback', 'title': 'Q', 'visibility': 'public', 'questions': [], 'q_types': {}}
+    body = {'trigger_id': 'T1'}
+    view = {
+        'private_metadata': json.dumps(meta),
+        'state': {
+            'values': {
+                'q_block_0': {'q_input_0': {'value': 'Question 1'}},
+                'q_type_block_0': {'q_type_select_0': {'selected_option': {'value': 'vote'}}}
+            }
+        }
+    }
+
+    main_module.handle_poll_step2(ack, body, view, client=object())
+
+    assert payloads
+    assert payloads[-1]['response_action'] == 'update'
+    assert payloads[-1]['view']['callback_id'] == 'submit_poll'
