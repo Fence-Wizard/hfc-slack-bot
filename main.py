@@ -134,6 +134,95 @@ def build_blended_blocks(title, q_types=None, state=None):
     return blocks
 
 
+# Helper to build the feedback poll configuration blocks
+def build_feedback_blocks(title, kinds=None, state=None):
+    """Return block kit structure for feedback poll config."""
+    blocks = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*{title}*\nAdd up to 10 questions."},
+        }
+    ]
+    kinds = kinds or {}
+    state = state or {}
+    for i in range(10):
+        q_text = state.get(f"feedback_q_block_{i}", {}).get(f"feedback_q_input_{i}", {}).get("value")
+        q_el = {
+            "type": "plain_text_input",
+            "action_id": f"feedback_q_input_{i}",
+            "placeholder": {"type": "plain_text", "text": "Type your question here"},
+        }
+        if q_text:
+            q_el["initial_value"] = q_text
+        blocks.append({
+            "type": "input",
+            "block_id": f"feedback_q_block_{i}",
+            "optional": True,
+            "label": {"type": "plain_text", "text": f"Question {i+1}"},
+            "element": q_el,
+        })
+
+        sel_kind = kinds.get(str(i))
+        kind_el = {
+            "type": "static_select",
+            "action_id": f"kind_select_{i}",
+            "options": [
+                {"text": {"type": "plain_text", "text": "Feedback"}, "value": "feedback"},
+                {"text": {"type": "plain_text", "text": "Vote"}, "value": "vote"},
+            ],
+        }
+        if sel_kind:
+            kind_el["initial_option"] = {
+                "text": {"type": "plain_text", "text": "Feedback" if sel_kind == "feedback" else "Vote"},
+                "value": sel_kind,
+            }
+        blocks.append({
+            "type": "input",
+            "block_id": f"kind_block_{i}",
+            "optional": True,
+            "label": {"type": "plain_text", "text": f"Type for Question {i+1}"},
+            "element": kind_el,
+        })
+
+        fmt_sel = state.get(f"format_block_{i}", {}).get(f"format_select_{i}", {}).get("selected_option")
+        fmt_el = {
+            "type": "static_select",
+            "action_id": f"format_select_{i}",
+            "options": [
+                {"text": {"type": "plain_text", "text": "Paragraph"}, "value": "paragraph"},
+                {"text": {"type": "plain_text", "text": "Stars 1-5"}, "value": "stars"},
+            ],
+        }
+        if fmt_sel:
+            fmt_el["initial_option"] = fmt_sel
+        if sel_kind != "vote":
+            blocks.append({
+                "type": "input",
+                "block_id": f"format_block_{i}",
+                "optional": True,
+                "label": {"type": "plain_text", "text": f"Format for Question {i+1}"},
+                "element": fmt_el,
+            })
+        else:
+            for j in range(5):
+                val = state.get(f"opt_block_{i}_{j}", {}).get(f"opt_input_{i}_{j}", {}).get("value")
+                opt_el = {
+                    "type": "plain_text_input",
+                    "action_id": f"opt_input_{i}_{j}",
+                    "placeholder": {"type": "plain_text", "text": "Type option text here"},
+                }
+                if val:
+                    opt_el["initial_value"] = val
+                blocks.append({
+                    "type": "input",
+                    "block_id": f"opt_block_{i}_{j}",
+                    "optional": True,
+                    "label": {"type": "plain_text", "text": f"Q{i+1} Option {j+1}"},
+                    "element": opt_el,
+                })
+    return blocks
+
+
 # ─── /poll ────────────────────────────────────────────────────────────────────
 @app.command("/poll")
 def open_poll_modal(ack, body, client):
@@ -208,6 +297,8 @@ def handle_poll_step1(ack, body, view, client):
     meta_data = {"channel": channel_id, "user": creator_id, "type": p_type, "title": title, "visibility": visibility}
     if p_type == "blended":
         meta_data["q_types"] = {}
+    if p_type == "feedback":
+        meta_data["q_kinds"] = {}
     meta = json.dumps(meta_data)
 
     if p_type == "vote":
@@ -244,51 +335,8 @@ def handle_poll_step1(ack, body, view, client):
             }
         })
     elif p_type == "feedback":
-        blocks = [
-            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*\nAdd up to 10 questions."}}
-        ]
-        for i in range(10):
-            blocks.extend([
-                {
-                    "type": "input",
-                    "block_id": f"feedback_q_block_{i}",
-                    "optional": True,
-                    "label": {"type": "plain_text", "text": f"Question {i+1}"},
-                    "element": {
-                        "type": "plain_text_input",
-                        "action_id": f"feedback_q_input_{i}",
-                        "placeholder": {"type": "plain_text", "text": "Type your question here"}
-                    }
-                },
-                {
-                    "type": "input",
-                    "block_id": f"kind_block_{i}",
-                    "optional": True,
-                    "label": {"type": "plain_text", "text": f"Type for Question {i+1}"},
-                    "element": {
-                        "type": "static_select",
-                        "action_id": f"kind_select_{i}",
-                        "options": [
-                            {"text": {"type": "plain_text", "text": "Feedback"}, "value": "feedback"},
-                            {"text": {"type": "plain_text", "text": "Vote"}, "value": "vote"}
-                        ]
-                    }
-                },
-                {
-                    "type": "input",
-                    "block_id": f"format_block_{i}",
-                    "optional": True,
-                    "label": {"type": "plain_text", "text": f"Format for Question {i+1}"},
-                    "element": {
-                        "type": "static_select",
-                        "action_id": f"format_select_{i}",
-                        "options": [
-                            {"text": {"type": "plain_text", "text": "Paragraph"}, "value": "paragraph"},
-                            {"text": {"type": "plain_text", "text": "Stars 1-5"}, "value": "stars"}
-                        ]
-                    }
-                }
-            ])
+        kinds = meta_data.get("q_kinds", {})
+        blocks = build_feedback_blocks(title, kinds)
     else:  # blended poll
         q_types = meta_data.get("q_types", {})
         blocks = build_blended_blocks(title, q_types)
@@ -332,6 +380,37 @@ def update_blended_question(ack, body):
             "blocks": blocks,
         },
     )
+
+# ─── Handle kind selection for feedback polls ───────────────────────────────
+@app.action(re.compile(r"^kind_select_\d+$"))
+def update_feedback_kind(ack, body):
+    """Update feedback poll modal when a question kind is chosen."""
+    view = body["view"]
+    action = body["actions"][0]
+    idx = int(action["action_id"].split("_")[-1])
+    sel_kind = action["selected_option"]["value"]
+    meta = json.loads(view["private_metadata"])
+    if meta.get("type") != "feedback":
+        ack()
+        return
+    kinds = meta.get("q_kinds", {})
+    kinds[str(idx)] = sel_kind
+    meta["q_kinds"] = kinds
+
+    state = view.get("state", {}).get("values", {})
+    blocks = build_feedback_blocks(meta["title"], kinds, state)
+
+    ack(
+        response_action="update",
+        view={
+            "type": "modal",
+            "callback_id": "submit_poll",
+            "private_metadata": json.dumps(meta),
+            "title": {"type": "plain_text", "text": "Create a Poll"},
+            "submit": {"type": "plain_text", "text": "Post Poll"},
+            "blocks": blocks,
+        },
+    )
 # ─── Submit Poll ───────────────────────────────────────────────────────────────
 @app.view("submit_poll")
 def handle_poll_submission(ack, body, view, client):
@@ -359,14 +438,25 @@ def handle_poll_submission(ack, body, view, client):
             q = state.get(f"feedback_q_block_{i}", {})\
                      .get(f"feedback_q_input_{i}", {})\
                      .get("value")
-            if q:
-                fqs.append(q)
-                kind_sel = state.get(f"kind_block_{i}", {}).get(f"kind_select_{i}", {}).get("selected_option")
-                kind = kind_sel["value"] if kind_sel else "feedback"
-                f_kinds.append(kind)
+            if not q:
+                continue
+            fqs.append(q)
+            kind_sel = state.get(f"kind_block_{i}", {}).get(f"kind_select_{i}", {}).get("selected_option")
+            kind = kind_sel["value"] if kind_sel else "feedback"
+            f_kinds.append(kind)
+            if kind == "feedback":
                 sel = state.get(f"format_block_{i}", {}).get(f"format_select_{i}", {}).get("selected_option")
                 fmt = sel["value"] if sel else "paragraph"
                 f_formats.append(fmt)
+                question_opts.append([])
+            else:
+                opts_list = []
+                for j in range(5):
+                    val = state.get(f"opt_block_{i}_{j}", {}).get(f"opt_input_{i}_{j}", {}).get("value")
+                    if val:
+                        opts_list.append(val)
+                question_opts.append(opts_list)
+                f_formats.append(None)
     else:  # blended
         for i in range(10):
             ksel = state.get(f"q_type_block_{i}", {}).get(f"q_type_select_{i}", {}).get("selected_option")
@@ -412,7 +502,7 @@ def handle_poll_submission(ack, body, view, client):
             text="❌ You must provide at least *1* question."
         )
         return
-    if p_type == "blended":
+    if p_type in ("blended", "feedback"):
         for idx, k in enumerate(f_kinds):
             if k == "vote" and len(question_opts[idx]) < 2:
                 client.chat_postEphemeral(
@@ -433,6 +523,34 @@ def handle_poll_submission(ack, body, view, client):
         for kind, opts_list in zip(f_kinds, question_opts):
             if kind == "vote":
                 vt.append({i: 0 for i in range(len(opts_list))})
+            else:
+                vt.append({})
+        poll_data.update({
+            "type": p_type,
+            "question": title,
+            "options": [],
+            "feedback_questions": fqs,
+            "feedback_formats": f_formats,
+            "feedback_kinds": f_kinds,
+            "question_options": question_opts,
+            "vote_tallies": vt,
+            "votes": {},
+            "tallies": {},
+            "feedback_responses": [],
+            "creator_id": creator_id,
+            "channel_id": channel_id,
+            "anonymous": visibility == "anonymous",
+            "multi": False,
+            "active": True,
+        })
+    elif p_type == "feedback":
+        vt = []
+        for kind, opts_list in zip(f_kinds, question_opts):
+            if kind == "vote":
+                if opts_list:
+                    vt.append({i: 0 for i in range(len(opts_list))})
+                else:
+                    vt.append({"yes": 0, "no": 0})
             else:
                 vt.append({})
         poll_data.update({
