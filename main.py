@@ -45,95 +45,6 @@ poll_data = {
     "active": False,
 }
 
-# Helper to build the blended poll configuration blocks
-def build_blended_blocks(title, q_types=None, state=None):
-    """Return block kit structure for blended poll config."""
-    blocks = [
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": f"*{title}*\nConfigure up to 10 questions."},
-        }
-    ]
-    q_types = q_types or {}
-    state = state or {}
-    for i in range(10):
-        sel = q_types.get(str(i))
-        element = {
-            "type": "static_select",
-            "action_id": f"q_type_select_{i}",
-            "options": [
-                {"text": {"type": "plain_text", "text": "Feedback"}, "value": "feedback"},
-                {"text": {"type": "plain_text", "text": "Vote"}, "value": "vote"},
-            ],
-        }
-        if sel:
-            element["initial_option"] = {
-                "text": {"type": "plain_text", "text": "Feedback" if sel == "feedback" else "Vote"},
-                "value": sel,
-            }
-        blocks.append({
-            "type": "input",
-            "block_id": f"q_type_block_{i}",
-            "optional": True,
-            "label": {"type": "plain_text", "text": f"Type for Question {i+1}"},
-            "element": element,
-        })
-        if sel:
-            q_text = state.get(f"q_block_{i}", {}).get(f"q_input_{i}", {}).get("value")
-            q_element = {
-                "type": "plain_text_input",
-                "action_id": f"q_input_{i}",
-                "placeholder": {"type": "plain_text", "text": "Type your question here"},
-            }
-            if q_text:
-                q_element["initial_value"] = q_text
-            blocks.append({
-                "type": "input",
-                "block_id": f"q_block_{i}",
-                "optional": True,
-                "label": {"type": "plain_text", "text": f"Question {i+1}"},
-                "element": q_element,
-            })
-
-            fmt_sel = state.get(f"format_block_{i}", {}).get(f"format_select_{i}", {}).get("selected_option")
-            fmt_element = {
-                "type": "static_select",
-                "action_id": f"format_select_{i}",
-                "options": [
-                    {"text": {"type": "plain_text", "text": "Paragraph"}, "value": "paragraph"},
-                    {"text": {"type": "plain_text", "text": "Stars 1-5"}, "value": "stars"},
-                ],
-            }
-            if fmt_sel:
-                fmt_element["initial_option"] = fmt_sel
-            blocks.append({
-                "type": "input",
-                "block_id": f"format_block_{i}",
-                "optional": True,
-                "label": {"type": "plain_text", "text": f"Format for Question {i+1}"},
-                "element": fmt_element,
-            })
-
-            if sel == "vote":
-                for j in range(5):
-                    val = state.get(f"opt_block_{i}_{j}", {}).get(f"opt_input_{i}_{j}", {}).get("value")
-                    opt_el = {
-                        "type": "plain_text_input",
-                        "action_id": f"opt_input_{i}_{j}",
-                        "placeholder": {"type": "plain_text", "text": "Type option text here"},
-                    }
-                    if val:
-                        opt_el["initial_value"] = val
-                    blocks.append({
-                        "type": "input",
-                        "block_id": f"opt_block_{i}_{j}",
-                        "optional": True,
-                        "label": {"type": "plain_text", "text": f"Q{i+1} Option {j+1}"},
-                        "element": opt_el,
-                    })
-    return blocks
-
-
 # ─── /poll ────────────────────────────────────────────────────────────────────
 @app.command("/poll")
 def open_poll_modal(ack, body, client):
@@ -205,10 +116,7 @@ def handle_poll_step1(ack, body, view, client):
     p_type = state["type_block"]["poll_type"]["selected_option"]["value"]
     title = state["question_block"]["question_input"]["value"]
     visibility = state["visibility_block"]["visibility_select"]["selected_option"]["value"]
-    meta_data = {"channel": channel_id, "user": creator_id, "type": p_type, "title": title, "visibility": visibility}
-    if p_type == "blended":
-        meta_data["q_types"] = {}
-    meta = json.dumps(meta_data)
+    meta = json.dumps({"channel": channel_id, "user": creator_id, "type": p_type, "title": title, "visibility": visibility})
 
     if p_type == "vote":
         blocks = [
@@ -290,8 +198,63 @@ def handle_poll_step1(ack, body, view, client):
                 }
             ])
     else:  # blended poll
-        q_types = meta_data.get("q_types", {})
-        blocks = build_blended_blocks(title, q_types)
+        blocks = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*\nConfigure up to 10 questions."}}
+        ]
+        for i in range(10):
+            blocks.extend([
+                {
+                    "type": "input",
+                    "block_id": f"q_type_block_{i}",
+                    "optional": True,
+                    "label": {"type": "plain_text", "text": f"Type for Question {i+1}"},
+                    "element": {
+                        "type": "static_select",
+                        "action_id": f"q_type_select_{i}",
+                        "options": [
+                            {"text": {"type": "plain_text", "text": "Feedback"}, "value": "feedback"},
+                            {"text": {"type": "plain_text", "text": "Vote"}, "value": "vote"}
+                        ]
+                    }
+                },
+                {
+                    "type": "input",
+                    "block_id": f"q_block_{i}",
+                    "optional": True,
+                    "label": {"type": "plain_text", "text": f"Question {i+1}"},
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": f"q_input_{i}",
+                        "placeholder": {"type": "plain_text", "text": "Type your question here"}
+                    }
+                },
+                {
+                    "type": "input",
+                    "block_id": f"format_block_{i}",
+                    "optional": True,
+                    "label": {"type": "plain_text", "text": f"Format for Question {i+1}"},
+                    "element": {
+                        "type": "static_select",
+                        "action_id": f"format_select_{i}",
+                        "options": [
+                            {"text": {"type": "plain_text", "text": "Paragraph"}, "value": "paragraph"},
+                            {"text": {"type": "plain_text", "text": "Stars 1-5"}, "value": "stars"}
+                        ]
+                    }
+                }
+            ])
+            for j in range(5):
+                blocks.append({
+                    "type": "input",
+                    "block_id": f"opt_block_{i}_{j}",
+                    "optional": True,
+                    "label": {"type": "plain_text", "text": f"Q{i+1} Option {j+1}"},
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": f"opt_input_{i}_{j}",
+                        "placeholder": {"type": "plain_text", "text": "Type option text here"}
+                    }
+                })
 
     ack(
         response_action="update",
@@ -299,34 +262,6 @@ def handle_poll_step1(ack, body, view, client):
             "type": "modal",
             "callback_id": "submit_poll",
             "private_metadata": meta,
-            "title": {"type": "plain_text", "text": "Create a Poll"},
-            "submit": {"type": "plain_text", "text": "Post Poll"},
-            "blocks": blocks,
-        },
-    )
-
-# ─── Handle question type selection for blended polls ─────────────────────────
-@app.action(re.compile(r"^q_type_select_\d+$"))
-def update_blended_question(ack, body):
-    """Update blended poll modal when a question type is chosen."""
-    view = body["view"]
-    action = body["actions"][0]
-    idx = int(action["action_id"].split("_")[-1])
-    sel_type = action["selected_option"]["value"]
-    meta = json.loads(view["private_metadata"])
-    q_types = meta.get("q_types", {})
-    q_types[str(idx)] = sel_type
-    meta["q_types"] = q_types
-
-    state = view.get("state", {}).get("values", {})
-    blocks = build_blended_blocks(meta["title"], q_types, state)
-
-    ack(
-        response_action="update",
-        view={
-            "type": "modal",
-            "callback_id": "submit_poll",
-            "private_metadata": json.dumps(meta),
             "title": {"type": "plain_text", "text": "Create a Poll"},
             "submit": {"type": "plain_text", "text": "Post Poll"},
             "blocks": blocks,
