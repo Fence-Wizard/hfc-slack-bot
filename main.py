@@ -45,6 +45,21 @@ poll_data = {
     "active": False,
 }
 
+# Helper to upload poll results to a Slack canvas (uses files_upload)
+def upload_results_canvas(client, channel_id, title, results_text):
+    """Create a canvas/post with the poll results and return a permalink."""
+    try:
+        resp = client.files_upload(
+            channels=channel_id,
+            content=results_text,
+            filetype="post",
+            title=title,
+        )
+        return resp.get("file", {}).get("permalink")
+    except Exception as e:
+        print(f"Error creating canvas: {e}")
+        return None
+
 # Helper to build the blended poll configuration blocks
 def build_blended_blocks(title, q_types=None, state=None):
     """Return block kit structure for blended poll config."""
@@ -1040,7 +1055,7 @@ def close_poll(ack, body, client):
 
     poll_data["active"] = False
     if poll_data["type"] == "vote":
-        final = f"✅ Poll *{poll_data['question']}* closed. Final results:\n"
+        final = f"Poll *{poll_data['question']}* results:\n"
         total = sum(poll_data["tallies"].values())
         max_votes = max(poll_data["tallies"].values()) if total else 0
         for i, opt in enumerate(poll_data["options"]):
@@ -1059,7 +1074,7 @@ def close_poll(ack, body, client):
                 else:
                     final += f"• <@{user}> → {poll_data['options'][choice]}\n"
     else:
-        final = f"✅ Feedback poll *{poll_data['question']}* closed. Collected feedback:\n"
+        final = f"Feedback poll *{poll_data['question']}* results:\n"
         q_types = poll_data.get("feedback_kinds", ["feedback"] * len(poll_data["feedback_questions"]))
         q_opts_all = poll_data.get("question_options", [])
         if poll_data.get("anonymous"):
@@ -1102,7 +1117,19 @@ def close_poll(ack, body, client):
                     else:
                         final += f"    • *{q}*: {a}\n"
 
-    client.chat_postMessage(channel=ch, text=final)
+    canvas_url = upload_results_canvas(
+        client,
+        ch,
+        f"{poll_data['question']} Results",
+        final,
+    )
+    if canvas_url:
+        client.chat_postMessage(
+            channel=ch,
+            text=f"✅ Poll *{poll_data['question']}* closed. Results posted to a Canvas: {canvas_url}",
+        )
+    else:
+        client.chat_postMessage(channel=ch, text=final)
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
 @flask_app.route("/slack/events", methods=["POST"])

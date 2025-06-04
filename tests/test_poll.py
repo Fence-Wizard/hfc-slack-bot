@@ -78,8 +78,17 @@ def poll_setup(main_module):
 class MockSlackClient:
     def __init__(self):
         self.messages = []
+        self.uploads = []
+
     def chat_postEphemeral(self, channel=None, user=None, text=None):
         self.messages.append({'channel': channel, 'user': user, 'text': text})
+
+    def chat_postMessage(self, channel=None, text=None):
+        self.messages.append({'channel': channel, 'text': text})
+
+    def files_upload(self, channels=None, content=None, filetype=None, title=None):
+        self.uploads.append({'channels': channels, 'content': content, 'filetype': filetype, 'title': title})
+        return {'file': {'permalink': 'http://example.com/canvas'}}
 
 
 def test_handle_vote_records_and_rejects(main_module, poll_setup):
@@ -229,3 +238,32 @@ def test_handle_poll_submission_ranking(main_module):
     assert pd['type'] == 'ranking'
     assert pd['feedback_questions'] == ['Rate']
     assert pd['feedback_formats'] == ['stars']
+
+
+def test_close_poll_only_creator_can_close(main_module, poll_setup):
+    client = MockSlackClient()
+
+    def ack():
+        pass
+
+    body = {'user_id': 'Unotcreator', 'channel_id': 'C1'}
+
+    main_module.close_poll(ack, body, client)
+
+    assert poll_setup['active']  # still active
+    assert client.messages[-1]['text'] == '❌ Only the poll creator can close it.'
+
+
+def test_close_poll_uploads_canvas(main_module, poll_setup):
+    client = MockSlackClient()
+
+    def ack():
+        pass
+
+    body = {'user_id': 'Ucreator', 'channel_id': 'C1'}
+
+    main_module.close_poll(ack, body, client)
+
+    assert not poll_setup['active']
+    assert client.uploads  # canvas was uploaded
+    assert 'http://example.com/canvas' in client.messages[-1]['text']
