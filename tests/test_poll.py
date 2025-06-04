@@ -167,3 +167,32 @@ def test_handle_poll_step1_blended(main_module):
     assert payloads
     assert payloads[0]['response_action'] == 'update'
     assert payloads[0]['view']['callback_id'] == 'submit_poll'
+
+
+def test_update_blended_question_uses_views_update(main_module):
+    calls = {'ack': 0, 'update': []}
+
+    def ack(**kwargs):
+        calls['ack'] += 1
+
+    class Client:
+        def views_update(self, **kwargs):
+            calls['update'].append(kwargs)
+
+    body = {
+        'view': {
+            'id': 'V123',
+            'hash': 'h',
+            'private_metadata': json.dumps({'title': 'Q', 'q_types': {}}),
+            'state': {'values': {}}
+        },
+        'actions': [
+            {'action_id': 'q_type_select_0', 'selected_option': {'value': 'vote'}}
+        ]
+    }
+
+    main_module.update_blended_question(ack, body, client=Client())
+
+    assert calls['ack'] == 1
+    assert calls['update']
+    assert calls['update'][0]['view']['blocks']

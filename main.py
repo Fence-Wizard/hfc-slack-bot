@@ -307,7 +307,7 @@ def handle_poll_step1(ack, body, view, client):
 
 # ─── Handle question type selection for blended polls ─────────────────────────
 @app.action(re.compile(r"^q_type_select_\d+$"))
-def update_blended_question(ack, body):
+def update_blended_question(ack, body, client):
     """Update blended poll modal when a question type is chosen."""
     view = body["view"]
     action = body["actions"][0]
@@ -321,8 +321,10 @@ def update_blended_question(ack, body):
     state = view.get("state", {}).get("values", {})
     blocks = build_blended_blocks(meta["title"], q_types, state)
 
-    ack(
-        response_action="update",
+    ack()
+    client.views_update(
+        view_id=view["id"],
+        hash=view.get("hash"),
         view={
             "type": "modal",
             "callback_id": "submit_poll",
