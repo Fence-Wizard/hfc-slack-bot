@@ -48,10 +48,16 @@ question. Feedback questions still allow either free-form paragraphs or a
 
 ## Blended Polls
 
-The initial modal now lets you choose *Vote*, *Feedback* or *Blended*.
+The initial modal now lets you choose *Vote*, *Feedback*, *Ranking* or *Blended*.
 Selecting **Blended** prompts you for up to ten questions where each question
 can be marked as either a vote or feedback prompt. Vote questions can include
 up to five custom options for participants to choose from.
+
+## Ranking Polls
+
+Select **Ranking** to ask participants to rate a single question from 1 to 5
+stars. Enter the question as the poll title in the initial modal. After posting
+the poll, users click *Submit Rating* to provide their star score.
 
 ## Multiple Selections
 

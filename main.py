@@ -329,6 +329,7 @@ def open_poll_modal(ack, body, client):
                             {"text": {"type": "plain_text", "text": "Vote"}, "value": "vote"},
                             {"text": {"type": "plain_text", "text": "Feedback"}, "value": "feedback"},
                             {"text": {"type": "plain_text", "text": "Blended"}, "value": "blended"},
+                            {"text": {"type": "plain_text", "text": "Ranking"}, "value": "ranking"},
                         ]
                     }
                 },
@@ -417,6 +418,23 @@ def handle_poll_step1(ack, body, view, client):
                 "title": {"type": "plain_text", "text": "Create a Poll"},
                 "submit": {"type": "plain_text", "text": "Post Poll"},
                 "blocks": blocks,
+            },
+        )
+    elif p_type == "ranking":
+        ack(
+            response_action="update",
+            view={
+                "type": "modal",
+                "callback_id": "submit_poll",
+                "private_metadata": meta,
+                "title": {"type": "plain_text", "text": "Create a Poll"},
+                "submit": {"type": "plain_text", "text": "Post Poll"},
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": f"*{title}*\nParticipants will rate from 1-5 stars."},
+                    }
+                ],
             },
         )
     else:  # feedback or blended
@@ -548,6 +566,11 @@ def handle_poll_submission(ack, body, view, client):
                        .get("value")
             if val:
                 opts.append(val)
+    elif p_type == "ranking":
+        fqs.append(title)
+        f_formats.append("stars")
+        f_kinds.append("feedback")
+        question_opts.append([])
     elif p_type in ("feedback", "blended"):
         questions = info.get("questions", [])
         q_types = info.get("q_types", [])
@@ -575,7 +598,7 @@ def handle_poll_submission(ack, body, view, client):
             text="❌ You must provide at least *2* vote options."
         )
         return
-    if p_type == "feedback" and len(fqs) < 1:
+    if p_type in ("feedback", "ranking") and len(fqs) < 1:
         client.chat_postEphemeral(
             channel=channel_id,
             user=creator_id,
@@ -621,6 +644,25 @@ def handle_poll_submission(ack, body, view, client):
             "feedback_kinds": f_kinds,
             "question_options": question_opts,
             "vote_tallies": vt,
+            "votes": {},
+            "tallies": {},
+            "feedback_responses": [],
+            "creator_id": creator_id,
+            "channel_id": channel_id,
+            "anonymous": visibility == "anonymous",
+            "multi": False,
+            "active": True,
+        })
+    elif p_type == "ranking":
+        poll_data.update({
+            "type": p_type,
+            "question": title,
+            "options": [],
+            "feedback_questions": fqs,
+            "feedback_formats": f_formats,
+            "feedback_kinds": f_kinds,
+            "question_options": question_opts,
+            "vote_tallies": [{}],
             "votes": {},
             "tallies": {},
             "feedback_responses": [],
@@ -694,7 +736,8 @@ def handle_poll_submission(ack, body, view, client):
                  for i, opt in enumerate(opts)
              ]}
         ]
-    else:  # feedback or blended
+    else:  # feedback, ranking or blended
+        button_text = "Submit Feedback" if p_type != "ranking" else "Submit Rating"
         blocks = [
             {"type": "section",
              "text": {"type": "mrkdwn", "text": f"*✏️ {title}*"}},
@@ -702,7 +745,7 @@ def handle_poll_submission(ack, body, view, client):
              "elements": [
                  {
                    "type": "button",
-                   "text": {"type": "plain_text", "text": "Submit Feedback"},
+                   "text": {"type": "plain_text", "text": button_text},
                    "action_id": "open_feedback"
                  }
              ]}

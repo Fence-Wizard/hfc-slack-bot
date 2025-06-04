@@ -191,3 +191,41 @@ def test_handle_poll_step2_ack_update(main_module):
     assert payloads
     assert payloads[-1]['response_action'] == 'update'
     assert payloads[-1]['view']['callback_id'] == 'submit_poll'
+
+
+def test_handle_poll_step1_ranking(main_module):
+    payloads = []
+    def ack(**kwargs):
+        payloads.append(kwargs)
+
+    body = {'trigger_id': 'T1'}
+    view = {
+        'private_metadata': json.dumps({'channel': 'C1', 'user': 'U1'}),
+        'state': {
+            'values': {
+                'type_block': {'poll_type': {'selected_option': {'value': 'ranking'}}},
+                'question_block': {'question_input': {'value': 'Rate'}},
+                'visibility_block': {'visibility_select': {'selected_option': {'value': 'public'}}},
+            }
+        }
+    }
+
+    main_module.handle_poll_step1(ack, body, view, client=object())
+
+    assert payloads
+    assert payloads[-1]['view']['callback_id'] == 'submit_poll'
+
+
+def test_handle_poll_submission_ranking(main_module):
+    def ack():
+        pass
+
+    meta = {'channel': 'C1', 'user': 'U1', 'type': 'ranking', 'title': 'Rate', 'visibility': 'public'}
+    view = {'private_metadata': json.dumps(meta), 'state': {'values': {}}}
+
+    main_module.handle_poll_submission(ack, body={}, view=view, client=types.SimpleNamespace(chat_postMessage=lambda **k: None, conversations_open=lambda users: {'channel': {'id': 'D1'}}))
+
+    pd = main_module.poll_data
+    assert pd['type'] == 'ranking'
+    assert pd['feedback_questions'] == ['Rate']
+    assert pd['feedback_formats'] == ['stars']
