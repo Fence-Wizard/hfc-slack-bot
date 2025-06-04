@@ -78,7 +78,7 @@ def poll_setup(main_module):
 class MockSlackClient:
     def __init__(self):
         self.messages = []
-        self.uploads = []
+        self.canvases = []
 
     def chat_postEphemeral(self, channel=None, user=None, text=None):
         self.messages.append({'channel': channel, 'user': user, 'text': text})
@@ -86,9 +86,9 @@ class MockSlackClient:
     def chat_postMessage(self, channel=None, text=None):
         self.messages.append({'channel': channel, 'text': text})
 
-    def files_upload(self, channels=None, content=None, filetype=None, title=None):
-        self.uploads.append({'channels': channels, 'content': content, 'filetype': filetype, 'title': title})
-        return {'file': {'permalink': 'http://example.com/canvas'}}
+    def conversations_canvases_create(self, channel=None, title=None, content=None):
+        self.canvases.append({'channel': channel, 'title': title, 'content': content})
+        return {'canvas': {'id': '12345'}}
 
 
 def test_handle_vote_records_and_rejects(main_module, poll_setup):
@@ -260,10 +260,10 @@ def test_close_poll_uploads_canvas(main_module, poll_setup):
     def ack():
         pass
 
-    body = {'user_id': 'Ucreator', 'channel_id': 'C1'}
+    body = {'user_id': 'Ucreator', 'channel_id': 'C1', 'team_id': 'T1'}
 
     main_module.close_poll(ack, body, client)
 
     assert not poll_setup['active']
-    assert client.uploads  # canvas was uploaded
-    assert 'http://example.com/canvas' in client.messages[-1]['text']
+    assert client.canvases  # canvas was uploaded
+    assert 'https://T1.slack.com/canvas/12345' in client.messages[-1]['text']
