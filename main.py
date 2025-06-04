@@ -59,32 +59,23 @@ def format_poll_results_for_canvas(tallies, options):
 
 # Helper to upload poll results to a Slack canvas using the new API
 def upload_results_canvas(client, channel_id, markdown, team_id=None, title=None):
-    """Create a canvas and return a permalink."""
+    """Create a Canvas in `channel_id` where `document_content` is Markdown.
+    Returns a permalink to the new Canvas, or None on failure.
+    """
     try:
-        doc = {
-            "title": title or "Poll Results",
-            "blocks": [
-                {
-                    "type": "rich_text",
-                    "elements": [
-                        {
-                            "type": "rich_text_section",
-                            "elements": [
-                                {"type": "text", "text": markdown}
-                            ],
-                        }
-                    ],
-                }
-            ],
-        }
-        resp = client.conversations_canvases_create(
+        response = client.conversations_canvases_create(
             channel_id=channel_id,
-            document_content=doc,
+            title=title or "Poll Results",
+            document_content={
+                "type": "markdown",
+                "markdown": markdown,
+            },
         )
-        canvas_id = resp.get("canvas", {}).get("id")
+        canvas_id = response.get("canvas", {}).get("id")
         if canvas_id and team_id:
             return f"https://{team_id}.slack.com/canvas/{canvas_id}"
         return None
+
     except Exception as e:
         print(f"Error creating canvas: {e}")
         return None
@@ -1064,7 +1055,8 @@ def show_poll_results(ack, body, client):
 @app.command("/closepoll")
 def close_poll(ack, body, client):
     ack()
-    usr, ch = body["user_id"], body["channel_id"]
+    usr = body["user_id"]
+    ch = body["channel_id"]
     team_id = body.get("team_id")
 
     if not poll_data["active"]:
@@ -1083,86 +1075,56 @@ def close_poll(ack, body, client):
         )
         return
 
+    # 1) Mark poll inactive
     poll_data["active"] = False
-    if poll_data["type"] == "vote":
-        final = f"Poll *{poll_data['question']}* results:\n"
-        total = sum(poll_data["tallies"].values())
-        max_votes = max(poll_data["tallies"].values()) if total else 0
-        for i, opt in enumerate(poll_data["options"]):
-            tally = poll_data["tallies"][i]
-            pct = int(round((tally / total) * 100)) if total else 0
-            line = f"• {opt}: {tally} ({pct}%)"
-            if tally == max_votes and total:
-                line = f"*{line}*"
-            final += line + "\n"
-        canvas_md = format_poll_results_for_canvas(poll_data["tallies"], poll_data["options"])
-        if not poll_data.get("anonymous"):
-            final += "\nVotes:\n"
-            for user, choice in poll_data["votes"].items():
-                if poll_data.get("multi"):
-                    opts = ", ".join(poll_data['options'][c] for c in sorted(choice))
-                    final += f"• <@{user}> → {opts}\n"
-                else:
-                    final += f"• <@{user}> → {poll_data['options'][choice]}\n"
-    else:
-        final = f"Feedback poll *{poll_data['question']}* results:\n"
-        q_types = poll_data.get("feedback_kinds", ["feedback"] * len(poll_data["feedback_questions"]))
-        q_opts_all = poll_data.get("question_options", [])
-        if poll_data.get("anonymous"):
-            for idx, q in enumerate(poll_data["feedback_questions"]):
-                kind = q_types[idx]
-                fmt = poll_data.get("feedback_formats", ["paragraph"])[idx]
-                if kind == "vote":
-                    tallies = poll_data.get("vote_tallies", [])
-                    opts = q_opts_all[idx] if q_opts_all and idx < len(q_opts_all) else None
-                    if opts:
-                        counts = [tallies[idx].get(i, 0) for i in range(len(opts))] if idx < len(tallies) else [0]*len(opts)
-                        result = ", ".join(f"{opt} {cnt}" for opt, cnt in zip(opts, counts))
-                        final += f"• *{q}*: {result}\n"
-                    else:
-                        yes = tallies[idx]["yes"] if idx < len(tallies) else 0
-                        no = tallies[idx]["no"] if idx < len(tallies) else 0
-                        final += f"• *{q}*: yes {yes}, no {no}\n"
-                elif fmt == "stars":
-                    vals = [int(r["answers"][idx]) for r in poll_data["feedback_responses"]]
-                    avg = sum(vals) / len(vals) if vals else 0
-                    final += f"• *{q}*: average {avg:.1f}/5\n"
-                else:
-                    final += f"\n*{q}*\n"
-                    for resp in poll_data["feedback_responses"]:
-                        final += f"    • {resp['answers'][idx]}\n"
-        else:
-            for resp in poll_data["feedback_responses"]:
-                final += f"\n— <@{resp['user']}>'s answers:\n"
-                for idx, (q, a) in enumerate(zip(poll_data["feedback_questions"], resp["answers"])):
-                    kind = q_types[idx]
-                    fmt = poll_data.get("feedback_formats", ["paragraph"])[idx]
-                    if kind == "vote":
-                        opts = q_opts_all[idx] if q_opts_all and idx < len(q_opts_all) else None
-                        if opts:
-                            final += f"    • *{q}*: {opts[int(a)]}\n"
-                        else:
-                            final += f"    • *{q}*: {a}\n"
-                    elif fmt == "stars":
-                        final += f"    • *{q}*: {a}/5\n"
-                    else:
-                        final += f"    • *{q}*: {a}\n"
-        canvas_md = final
 
-    canvas_url = upload_results_canvas(
-        client,
-        ch,
-        canvas_md,
-        team_id,
-        f"{poll_data['question']} Results",
+    # 2) Build Markdown for Canvas
+    def format_poll_results_for_canvas(tallies, options, creator_id, question):
+        total = sum(tallies.values())
+        lines = [f"# Poll “{question}”\n", "**Final Results:**"]
+        for i, opt in enumerate(options):
+            count = tallies[i]
+            pct = int(round((count / total) * 100)) if total else 0
+            lines.append(f"• {opt}:  {count} votes ({pct}%)")
+        from datetime import datetime
+        ts = datetime.now().strftime("%B %d, %Y %-I:%M %p EDT")
+        lines.append(f"\n_Closed by <@{creator_id}> at {ts}_")
+        return "\n".join(lines)
+
+    canvas_md = format_poll_results_for_canvas(
+        poll_data["tallies"],
+        poll_data["options"],
+        poll_data["creator_id"],
+        poll_data["question"],
     )
+
+    # 3) Attempt to create a Canvas
+    canvas_url = upload_results_canvas(
+        client=client,
+        channel_id=ch,
+        markdown=canvas_md,
+        team_id=team_id,
+        title=f"Poll Results: {poll_data['question']}",
+    )
+
+    # 4) Post final results
     if canvas_url:
         client.chat_postMessage(
             channel=ch,
-            text=f"✅ Poll *{poll_data['question']}* closed. Results posted to a Canvas: {canvas_url}",
+            text=(
+                f"✅ Poll *{poll_data['question']}* closed. "
+                f"View results in Canvas: {canvas_url}"
+            ),
         )
     else:
-        client.chat_postMessage(channel=ch, text=final)
+        client.chat_postMessage(
+            channel=ch,
+            text=(
+                f"✅ Poll *{poll_data['question']}* closed. "
+                "Unable to create a Canvas—here are the results:\n\n"
+                f"{canvas_md}"
+            ),
+        )
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
 @flask_app.route("/slack/events", methods=["POST"])
