@@ -86,8 +86,8 @@ class MockSlackClient:
     def chat_postMessage(self, channel=None, text=None):
         self.messages.append({'channel': channel, 'text': text})
 
-    def conversations_canvases_create(self, channel_id=None, document_content=None):
-        self.canvases.append({'channel_id': channel_id, 'document_content': document_content})
+    def conversations_canvases_create(self, channel_id=None, document_content=None, title=None):
+        self.canvases.append({'channel_id': channel_id, 'document_content': document_content, 'title': title})
         return {'canvas': {'id': '12345'}}
 
 
