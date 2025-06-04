@@ -75,6 +75,7 @@ def build_blended_blocks(title, q_types=None, state=None):
             "type": "input",
             "block_id": f"q_type_block_{i}",
             "optional": True,
+            "dispatch_action": True,
             "label": {"type": "plain_text", "text": f"Type for Question {i+1}"},
             "element": element,
         })
@@ -180,6 +181,7 @@ def build_feedback_blocks(title, kinds=None, state=None):
             "type": "input",
             "block_id": f"kind_block_{i}",
             "optional": True,
+            "dispatch_action": True,
             "label": {"type": "plain_text", "text": f"Type for Question {i+1}"},
             "element": kind_el,
         })
