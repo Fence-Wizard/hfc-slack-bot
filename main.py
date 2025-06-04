@@ -45,17 +45,31 @@ poll_data = {
     "active": False,
 }
 
-# Helper to upload poll results to a Slack canvas (uses files_upload)
-def upload_results_canvas(client, channel_id, title, results_text):
-    """Create a canvas/post with the poll results and return a permalink."""
+# Helper to format vote results for Canvas
+def format_poll_results_for_canvas(tallies, options):
+    """Return markdown summarizing vote tallies."""
+    total = sum(tallies.values())
+    lines = []
+    for idx, opt in enumerate(options):
+        tally = tallies.get(idx, 0)
+        pct = int(round((tally / total) * 100)) if total else 0
+        lines.append(f"- {opt}: {tally} ({pct}%)")
+    return "\n".join(lines)
+
+
+# Helper to upload poll results to a Slack canvas using the new API
+def upload_results_canvas(client, channel_id, markdown, team_id=None, title=None):
+    """Create a canvas and return a permalink."""
     try:
-        resp = client.files_upload(
-            channels=channel_id,
-            content=results_text,
-            filetype="post",
-            title=title,
+        resp = client.conversations_canvases_create(
+            channel=channel_id,
+            title=title or "Poll Results",
+            content=markdown,
         )
-        return resp.get("file", {}).get("permalink")
+        canvas_id = resp.get("canvas", {}).get("id")
+        if canvas_id and team_id:
+            return f"https://{team_id}.slack.com/canvas/{canvas_id}"
+        return None
     except Exception as e:
         print(f"Error creating canvas: {e}")
         return None
@@ -1036,6 +1050,7 @@ def show_poll_results(ack, body, client):
 def close_poll(ack, body, client):
     ack()
     usr, ch = body["user_id"], body["channel_id"]
+    team_id = body.get("team_id")
 
     if not poll_data["active"]:
         client.chat_postEphemeral(
@@ -1065,6 +1080,7 @@ def close_poll(ack, body, client):
             if tally == max_votes and total:
                 line = f"*{line}*"
             final += line + "\n"
+        canvas_md = format_poll_results_for_canvas(poll_data["tallies"], poll_data["options"])
         if not poll_data.get("anonymous"):
             final += "\nVotes:\n"
             for user, choice in poll_data["votes"].items():
@@ -1116,12 +1132,14 @@ def close_poll(ack, body, client):
                         final += f"    • *{q}*: {a}/5\n"
                     else:
                         final += f"    • *{q}*: {a}\n"
+        canvas_md = final
 
     canvas_url = upload_results_canvas(
         client,
         ch,
+        canvas_md,
+        team_id,
         f"{poll_data['question']} Results",
-        final,
     )
     if canvas_url:
         client.chat_postMessage(
