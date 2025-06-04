@@ -61,10 +61,25 @@ def format_poll_results_for_canvas(tallies, options):
 def upload_results_canvas(client, channel_id, markdown, team_id=None, title=None):
     """Create a canvas and return a permalink."""
     try:
+        doc = {
+            "title": title or "Poll Results",
+            "blocks": [
+                {
+                    "type": "rich_text",
+                    "elements": [
+                        {
+                            "type": "rich_text_section",
+                            "elements": [
+                                {"type": "text", "text": markdown}
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
         resp = client.conversations_canvases_create(
-            channel=channel_id,
-            title=title or "Poll Results",
-            content=markdown,
+            channel_id=channel_id,
+            document_content=doc,
         )
         canvas_id = resp.get("canvas", {}).get("id")
         if canvas_id and team_id:
