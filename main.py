@@ -63,9 +63,8 @@ def upload_results_canvas(client, channel_id, markdown, team_id=None, title=None
     Returns a permalink to the new Canvas, or None on failure.
     """
     try:
-        # Use “channel=…” instead of “channel_id=…” for the Canvas API call
         response = client.conversations_canvases_create(
-            channel=channel_id,
+            channel_id=channel_id,
             title=title or "Poll Results",
             document_content={
                 "type": "markdown",
