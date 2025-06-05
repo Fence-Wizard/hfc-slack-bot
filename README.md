@@ -6,6 +6,8 @@ This repository contains a simple Slack bot built with [Slack Bolt](https://slac
 
 - **Python 3.8+** - ensure Python is installed on your system.
 - **Slack credentials** - `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` from your Slack App configuration.
+- Slack's Canvas API is only available on recent versions of the Slack SDK. Ensure you install the dependencies listed in `requirements.txt` to get `slack_bolt >= 1.23` and `slack_sdk >= 3.35`.
+- Your Slack workspace must also be enrolled in the Canvas beta and grant `canvases:write` and `canvases:read` scopes to the bot token.
 
 ## Installation
 
