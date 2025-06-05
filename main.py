@@ -1057,8 +1057,8 @@ def close_poll(ack, body, client):
     ack()
     usr = body["user_id"]
     ch = body["channel_id"]
-    team_id = body.get("team_id")
 
+    # If no active poll, notify and exit
     if not poll_data["active"]:
         client.chat_postEphemeral(
             channel=ch,
@@ -1067,6 +1067,7 @@ def close_poll(ack, body, client):
         )
         return
 
+    # Only the creator can close the poll
     if poll_data["creator_id"] != usr:
         client.chat_postEphemeral(
             channel=ch,
@@ -1075,56 +1076,87 @@ def close_poll(ack, body, client):
         )
         return
 
-    # 1) Mark poll inactive
+    # Mark poll as inactive
     poll_data["active"] = False
 
-    # 2) Build Markdown for Canvas
-    def format_poll_results_for_canvas(tallies, options, creator_id, question):
-        total = sum(tallies.values())
-        lines = [f"# Poll “{question}”\n", "**Final Results:**"]
-        for i, opt in enumerate(options):
-            count = tallies[i]
-            pct = int(round((count / total) * 100)) if total else 0
-            lines.append(f"• {opt}:  {count} votes ({pct}%)")
-        from datetime import datetime
-        ts = datetime.now().strftime("%B %d, %Y %-I:%M %p EDT")
-        lines.append(f"\n_Closed by <@{creator_id}> at {ts}_")
-        return "\n".join(lines)
+    # Build Block Kit for a polished summary
+    from datetime import datetime
 
-    canvas_md = format_poll_results_for_canvas(
-        poll_data["tallies"],
-        poll_data["options"],
-        poll_data["creator_id"],
-        poll_data["question"],
-    )
+    # Calculate totals and percentages
+    total_votes = sum(poll_data["tallies"].values())
+    header_text = f"📊 Poll Results: *{poll_data['question']}*"
+    timestamp = datetime.now().strftime("%B %d, %Y %I:%M %p EDT")
+    context_text = f"_Closed by <@{usr}> on {timestamp}_"
 
-    # 3) Attempt to create a Canvas
-    canvas_url = upload_results_canvas(
-        client=client,
-        channel_id=ch,
-        markdown=canvas_md,
-        team_id=team_id,
-        title=f"Poll Results: {poll_data['question']}",
-    )
+    # Create fields: split into two columns if more than 3 options
+    fields = []
+    for i, option in enumerate(poll_data["options"]):
+        count = poll_data["tallies"].get(i, 0)
+        pct = int(round((count / total_votes) * 100)) if total_votes else 0
+        # Build a small bar chart using blocks for visual clarity
+        bar_length = int(round(pct / 5))  # one ▇ per 5%
+        bar = "▇" * bar_length if bar_length > 0 else ""
+        fields.append({
+            "type": "mrkdwn",
+            "text": f"*{option}*\nVotes: {count} ({pct}%)  {bar}"
+        })
 
-    # 4) Post final results
-    if canvas_url:
-        client.chat_postMessage(
-            channel=ch,
-            text=(
-                f"✅ Poll *{poll_data['question']}* closed. "
-                f"View results in Canvas: {canvas_url}"
-            ),
-        )
+    # If there are more than 4 options, break into two sections
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": header_text}},
+        {"type": "divider"}
+    ]
+
+    # Split fields into two columns if necessary
+    if len(fields) > 4:
+        mid = (len(fields) + 1) // 2
+        left_fields = fields[:mid]
+        right_fields = fields[mid:]
+        blocks.append({
+            "type": "section",
+            "fields": left_fields
+        })
+        blocks.append({
+            "type": "section",
+            "fields": right_fields
+        })
     else:
-        client.chat_postMessage(
-            channel=ch,
-            text=(
-                f"✅ Poll *{poll_data['question']}* closed. "
-                "Unable to create a Canvas—here are the results:\n\n"
-                f"{canvas_md}"
-            ),
-        )
+        blocks.append({
+            "type": "section",
+            "fields": fields
+        })
+
+    # Optionally list individual votes if visibility is public
+    if poll_data.get("anonymous") is False:
+        vote_lines = []
+        for user_id, choice in poll_data["votes"].items():
+            selected = poll_data["options"][choice]
+            vote_lines.append(f"• <@{user_id}> → {selected}")
+        if vote_lines:
+            blocks.append({"type": "divider"})
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*Individual Votes:*"
+                }
+            })
+            # Add each vote as separate context element for readability
+            for line in vote_lines:
+                blocks.append({
+                    "type": "context",
+                    "elements": [{"type": "mrkdwn", "text": line}]
+                })
+
+    # Add closing context (who closed it and when)
+    blocks.append({"type": "divider"})
+    blocks.append({
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": context_text}]
+    })
+
+    # Post the summarized results
+    client.chat_postMessage(channel=ch, blocks=blocks)
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
 @flask_app.route("/slack/events", methods=["POST"])

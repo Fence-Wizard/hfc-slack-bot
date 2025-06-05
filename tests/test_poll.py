@@ -80,11 +80,11 @@ class MockSlackClient:
         self.messages = []
         self.canvases = []
 
-    def chat_postEphemeral(self, channel=None, user=None, text=None):
-        self.messages.append({'channel': channel, 'user': user, 'text': text})
+    def chat_postEphemeral(self, channel=None, user=None, text=None, blocks=None):
+        self.messages.append({'channel': channel, 'user': user, 'text': text, 'blocks': blocks})
 
-    def chat_postMessage(self, channel=None, text=None):
-        self.messages.append({'channel': channel, 'text': text})
+    def chat_postMessage(self, channel=None, text=None, blocks=None):
+        self.messages.append({'channel': channel, 'text': text, 'blocks': blocks})
 
     def conversations_canvases_create(self, channel_id=None, document_content=None, title=None):
         self.canvases.append({'channel_id': channel_id, 'document_content': document_content, 'title': title})
@@ -254,16 +254,18 @@ def test_close_poll_only_creator_can_close(main_module, poll_setup):
     assert client.messages[-1]['text'] == '❌ Only the poll creator can close it.'
 
 
-def test_close_poll_uploads_canvas(main_module, poll_setup):
+def test_close_poll_posts_summary_blocks(main_module, poll_setup):
     client = MockSlackClient()
 
     def ack():
         pass
 
-    body = {'user_id': 'Ucreator', 'channel_id': 'C1', 'team_id': 'T1'}
+    body = {'user_id': 'Ucreator', 'channel_id': 'C1'}
 
     main_module.close_poll(ack, body, client)
 
     assert not poll_setup['active']
-    assert client.canvases  # canvas was uploaded
-    assert 'https://T1.slack.com/canvas/12345' in client.messages[-1]['text']
+    assert not client.canvases  # no canvas created
+    assert client.messages
+    last = client.messages[-1]
+    assert 'blocks' in last and last['blocks']
