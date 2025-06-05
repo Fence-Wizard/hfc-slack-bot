@@ -1051,6 +1051,53 @@ def show_poll_results(ack, body, client):
 
     client.chat_postEphemeral(channel=ch, user=usr, text=text)
 
+# Helper to summarize results for non-vote polls
+def _non_vote_results_text():
+    """Return a text summary for feedback, ranking or blended polls."""
+    text = f"*✏️ Feedback for:* {poll_data['question']}\n"
+    q_types = poll_data.get("feedback_kinds", ["feedback"] * len(poll_data["feedback_questions"]))
+    q_opts_all = poll_data.get("question_options", [])
+    if poll_data.get("anonymous"):
+        for idx, q in enumerate(poll_data["feedback_questions"]):
+            kind = q_types[idx]
+            fmt = poll_data.get("feedback_formats", ["paragraph"])[idx]
+            if kind == "vote":
+                tallies = poll_data.get("vote_tallies", [])
+                opts = q_opts_all[idx] if q_opts_all and idx < len(q_opts_all) else None
+                if opts:
+                    counts = [tallies[idx].get(i, 0) for i in range(len(opts))] if idx < len(tallies) else [0] * len(opts)
+                    result = ", ".join(f"{opt} {cnt}" for opt, cnt in zip(opts, counts))
+                    text += f"• *{q}*: {result}\n"
+                else:
+                    yes = tallies[idx]["yes"] if idx < len(tallies) else 0
+                    no = tallies[idx]["no"] if idx < len(tallies) else 0
+                    text += f"• *{q}*: yes {yes}, no {no}\n"
+            elif fmt == "stars":
+                vals = [int(r["answers"][idx]) for r in poll_data["feedback_responses"]]
+                avg = sum(vals) / len(vals) if vals else 0
+                text += f"• *{q}*: average {avg:.1f}/5\n"
+            else:
+                text += f"\n*{q}*\n"
+                for resp in poll_data["feedback_responses"]:
+                    text += f"    • {resp['answers'][idx]}\n"
+    else:
+        for resp in poll_data["feedback_responses"]:
+            text += f"\n— <@{resp['user']}>'s answers:\n"
+            for idx, (q, a) in enumerate(zip(poll_data["feedback_questions"], resp["answers"])):
+                kind = q_types[idx]
+                fmt = poll_data.get("feedback_formats", ["paragraph"])[idx]
+                if kind == "vote":
+                    opts = q_opts_all[idx] if q_opts_all and idx < len(q_opts_all) else None
+                    if opts:
+                        text += f"    • *{q}*: {opts[int(a)]}\n"
+                    else:
+                        text += f"    • *{q}*: {a}\n"
+                elif fmt == "stars":
+                    text += f"    • *{q}*: {a}/5\n"
+                else:
+                    text += f"    • *{q}*: {a}\n"
+    return text
+
 # ─── /closepoll ──────────────────────────────────────────────────────────────
 @app.command("/closepoll")
 def close_poll(ack, body, client):
@@ -1079,13 +1126,18 @@ def close_poll(ack, body, client):
     # Mark poll as inactive
     poll_data["active"] = False
 
-    # Build Block Kit for a polished summary
     from datetime import datetime
+    timestamp = datetime.now().strftime("%B %d, %Y %I:%M %p EDT")
 
-    # Calculate totals and percentages
+    if poll_data.get("type") != "vote":
+        text = _non_vote_results_text()
+        text += f"\n_Closed by <@{usr}> on {timestamp}_"
+        client.chat_postMessage(channel=ch, text=text)
+        return
+
+    # Build Block Kit summary for vote polls
     total_votes = sum(poll_data["tallies"].values())
     header_text = f"📊 Poll Results: *{poll_data['question']}*"
-    timestamp = datetime.now().strftime("%B %d, %Y %I:%M %p EDT")
     context_text = f"_Closed by <@{usr}> on {timestamp}_"
 
     # Create fields: split into two columns if more than 3 options

@@ -269,3 +269,38 @@ def test_close_poll_posts_summary_blocks(main_module, poll_setup):
     assert client.messages
     last = client.messages[-1]
     assert 'blocks' in last and last['blocks']
+
+
+def test_close_poll_non_vote_text_summary(main_module):
+    pd = main_module.poll_data
+    pd.update({
+        'type': 'feedback',
+        'question': 'Why',
+        'options': [],
+        'feedback_questions': ['Why'],
+        'feedback_formats': ['paragraph'],
+        'feedback_kinds': ['feedback'],
+        'question_options': [],
+        'vote_tallies': [{}],
+        'tallies': {},
+        'votes': {},
+        'feedback_responses': [{'user': 'U1', 'answers': ['A']}],
+        'creator_id': 'Ucreator',
+        'channel_id': 'C1',
+        'active': True,
+    })
+
+    client = MockSlackClient()
+
+    def ack():
+        pass
+
+    body = {'user_id': 'Ucreator', 'channel_id': 'C1'}
+
+    main_module.close_poll(ack, body, client)
+
+    assert not pd['active']
+    assert client.messages
+    last = client.messages[-1]
+    assert not last['blocks']
+    assert 'Feedback for' in last['text']
