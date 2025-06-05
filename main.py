@@ -42,6 +42,7 @@ poll_data = {
     "channel_id": None,
     "anonymous": True,
     "multi": False,
+    "multi_questions": [],
     "active": False,
 }
 
@@ -171,6 +172,22 @@ def build_blended_blocks(title, q_types=None, state=None):
                         "label": {"type": "plain_text", "text": f"Q{i+1} Option {j+1}"},
                         "element": opt_el,
                     })
+            multi_checked = state.get(f"multi_block_{i}", {}).get(f"multi_select_{i}", {}).get("selected_options")
+            blocks.append({
+                "type": "input",
+                "block_id": f"multi_block_{i}",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "Allow multiple selections?"},
+                "element": {
+                    "type": "checkboxes",
+                    "action_id": f"multi_select_{i}",
+                    "options": [{
+                        "text": {"type": "plain_text", "text": "Users can select multiple options"},
+                        "value": "allow_multi"
+                    }],
+                    **({"initial_options": [{"text": {"type": "plain_text", "text": "Users can select multiple options"}, "value": "allow_multi"}]} if multi_checked else {})
+                },
+            })
     return blocks
 
 
@@ -223,6 +240,23 @@ def build_question_type_blocks(title, q_types=None, state=None):
             "label": {"type": "plain_text", "text": f"Type for Question {i+1}"},
             "element": type_el,
         })
+        if sel == "vote":
+            multi_checked = state.get(f"multi_block_{i}", {}).get(f"multi_select_{i}", {}).get("selected_options")
+            blocks.append({
+                "type": "input",
+                "block_id": f"multi_block_{i}",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "Allow multiple selections?"},
+                "element": {
+                    "type": "checkboxes",
+                    "action_id": f"multi_select_{i}",
+                    "options": [{
+                        "text": {"type": "plain_text", "text": "Users can select multiple options"},
+                        "value": "allow_multi"
+                    }],
+                    **({"initial_options": [{"text": {"type": "plain_text", "text": "Users can select multiple options"}, "value": "allow_multi"}]} if multi_checked else {})
+                },
+            })
     return blocks
 
 
@@ -340,6 +374,22 @@ def build_feedback_blocks(title, kinds=None, state=None):
                     "label": {"type": "plain_text", "text": f"Q{i+1} Option {j+1}"},
                     "element": opt_el,
                 })
+            multi_checked = state.get(f"multi_block_{i}", {}).get(f"multi_select_{i}", {}).get("selected_options")
+            blocks.append({
+                "type": "input",
+                "block_id": f"multi_block_{i}",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "Allow multiple selections?"},
+                "element": {
+                    "type": "checkboxes",
+                    "action_id": f"multi_select_{i}",
+                    "options": [{
+                        "text": {"type": "plain_text", "text": "Users can select multiple options"},
+                        "value": "allow_multi"
+                    }],
+                    **({"initial_options": [{"text": {"type": "plain_text", "text": "Users can select multiple options"}, "value": "allow_multi"}]} if multi_checked else {})
+                },
+            })
     return blocks
 
 
@@ -503,6 +553,7 @@ def handle_poll_step2(ack, body, view, client):
     state = view["state"]["values"]
     questions = []
     q_types = []
+    multi_flags = []
     for i in range(10):
         q = state.get(f"q_block_{i}", {}).get(f"q_input_{i}", {}).get("value")
         sel = state.get(f"q_type_block_{i}", {}).get(f"q_type_select_{i}", {}).get("selected_option")
@@ -513,9 +564,12 @@ def handle_poll_step2(ack, body, view, client):
         if val == "clear":
             val = "feedback"
         q_types.append(val)
+        multi = state.get(f"multi_block_{i}", {}).get(f"multi_select_{i}", {}).get("selected_options")
+        multi_flags.append(bool(multi))
 
     meta["questions"] = questions
     meta["q_types"] = q_types
+    meta["multi_flags"] = multi_flags
 
     blocks = build_detail_blocks(meta["title"], questions, q_types)
 
@@ -706,6 +760,7 @@ def handle_poll_submission(ack, body, view, client):
             "channel_id": channel_id,
             "anonymous": visibility == "anonymous",
             "multi": False,
+            "multi_questions": info.get("multi_flags", []),
             "active": True,
         })
     elif p_type == "ranking":
@@ -725,6 +780,7 @@ def handle_poll_submission(ack, body, view, client):
             "channel_id": channel_id,
             "anonymous": visibility == "anonymous",
             "multi": False,
+            "multi_questions": [],
             "active": True,
         })
     elif p_type == "feedback":
@@ -753,6 +809,7 @@ def handle_poll_submission(ack, body, view, client):
             "channel_id": channel_id,
             "anonymous": visibility == "anonymous",
             "multi": False,
+            "multi_questions": info.get("multi_flags", []),
             "active": True,
         })
     else:
@@ -772,6 +829,7 @@ def handle_poll_submission(ack, body, view, client):
             "channel_id": channel_id,
             "anonymous": visibility == "anonymous",
             "multi": allow_multi,
+            "multi_questions": [],
             "active": True,
         })
 
@@ -879,11 +937,13 @@ def open_feedback_modal(ack, body, client):
     for i, q in enumerate(questions):
         fmt = poll_data.get("feedback_formats", ["paragraph"] * len(questions))[i]
         kind = poll_data.get("feedback_kinds", ["feedback"] * len(questions))[i]
+        multi_flags = poll_data.get("multi_questions", [])
+        multi = multi_flags[i] if i < len(multi_flags) else False
         if kind == "vote":
             q_opts = poll_data.get("question_options", [])
             if q_opts and i < len(q_opts) and q_opts[i]:
                 element = {
-                    "type": "static_select",
+                    "type": "multi_static_select" if multi else "static_select",
                     "action_id": f"resp_input_{i}",
                     "options": [
                         {"text": {"type": "plain_text", "text": opt}, "value": str(idx)}
@@ -892,7 +952,7 @@ def open_feedback_modal(ack, body, client):
                 }
             else:
                 element = {
-                    "type": "static_select",
+                    "type": "multi_static_select" if multi else "static_select",
                     "action_id": f"resp_input_{i}",
                     "options": [
                         {"text": {"type": "plain_text", "text": "Yes"}, "value": "yes"},
@@ -946,21 +1006,39 @@ def handle_feedback_submission(ack, body, view, client):
 
     q_types = poll_data.get("feedback_kinds", ["feedback"] * len(poll_data["feedback_questions"]))
     q_opts_all = poll_data.get("question_options", [])
+    multi_flags = poll_data.get("multi_questions", [])
     for i in range(len(poll_data["feedback_questions"])):
         kind = q_types[i]
         fmt = poll_data.get("feedback_formats", ["paragraph"])[i]
         if kind == "vote":
-            sel = state[f"resp_block_{i}"][f"resp_input_{i}"]["selected_option"]["value"]
-            vt = poll_data.get("vote_tallies", [])
-            if q_opts_all and i < len(q_opts_all) and q_opts_all[i]:
-                idx = int(sel)
-                if i < len(vt):
-                    vt[i][idx] = vt[i].get(idx, 0) + 1
-                ans = idx
+            if multi_flags[i] if i < len(multi_flags) else False:
+                sel_opts = state[f"resp_block_{i}"][f"resp_input_{i}"]["selected_options"]
+                vt = poll_data.get("vote_tallies", [])
+                selections = []
+                for opt in sel_opts:
+                    val = opt["value"]
+                    if q_opts_all and i < len(q_opts_all) and q_opts_all[i]:
+                        idx = int(val)
+                        if i < len(vt):
+                            vt[i][idx] = vt[i].get(idx, 0) + 1
+                        selections.append(idx)
+                    else:
+                        if i < len(vt):
+                            vt[i][val] = vt[i].get(val, 0) + 1
+                        selections.append(val)
+                ans = selections
             else:
-                if i < len(vt):
-                    vt[i][sel] = vt[i].get(sel, 0) + 1
-                ans = sel
+                sel = state[f"resp_block_{i}"][f"resp_input_{i}"]["selected_option"]["value"]
+                vt = poll_data.get("vote_tallies", [])
+                if q_opts_all and i < len(q_opts_all) and q_opts_all[i]:
+                    idx = int(sel)
+                    if i < len(vt):
+                        vt[i][idx] = vt[i].get(idx, 0) + 1
+                    ans = idx
+                else:
+                    if i < len(vt):
+                        vt[i][sel] = vt[i].get(sel, 0) + 1
+                    ans = sel
         else:
             if fmt == "stars":
                 ans = state[f"resp_block_{i}"][f"resp_input_{i}"]["selected_option"]["value"]
@@ -1033,9 +1111,17 @@ def show_poll_results(ack, body, client):
                     if kind == "vote":
                         opts = q_opts_all[idx] if q_opts_all and idx < len(q_opts_all) else None
                         if opts:
-                            text += f"    • *{q}*: {opts[int(a)]}\n"
+                            if isinstance(a, list):
+                                sel = ", ".join(opts[int(x)] for x in a)
+                            else:
+                                sel = opts[int(a)]
+                            text += f"    • *{q}*: {sel}\n"
                         else:
-                            text += f"    • *{q}*: {a}\n"
+                            if isinstance(a, list):
+                                sel = ", ".join(a)
+                            else:
+                                sel = a
+                            text += f"    • *{q}*: {sel}\n"
                     elif fmt == "stars":
                         text += f"    • *{q}*: {a}/5\n"
                     else:
@@ -1126,9 +1212,17 @@ def _non_vote_results_text():
                 if kind == "vote":
                     opts = q_opts_all[idx] if q_opts_all and idx < len(q_opts_all) else None
                     if opts:
-                        text += f"    • *{q}*: {opts[int(a)]}\n"
+                        if isinstance(a, list):
+                            sel = ", ".join(opts[int(x)] for x in a)
+                        else:
+                            sel = opts[int(a)]
+                        text += f"    • *{q}*: {sel}\n"
                     else:
-                        text += f"    • *{q}*: {a}\n"
+                        if isinstance(a, list):
+                            sel = ", ".join(a)
+                        else:
+                            sel = a
+                        text += f"    • *{q}*: {sel}\n"
                 elif fmt == "stars":
                     text += f"    • *{q}*: {a}/5\n"
                 else:
