@@ -305,3 +305,39 @@ def test_close_poll_non_vote_text_summary(main_module):
     last = client.messages[-1]
     assert not last['blocks']
     assert 'Feedback for' in last['text']
+
+
+def test_feedback_multi_vote_question(main_module):
+    pd = main_module.poll_data
+    pd.update({
+        'type': 'feedback',
+        'question': 'Poll',
+        'options': [],
+        'feedback_questions': ['Q1'],
+        'feedback_formats': [None],
+        'feedback_kinds': ['vote'],
+        'question_options': [['A', 'B', 'C']],
+        'vote_tallies': [{0: 0, 1: 0, 2: 0}],
+        'multi_questions': [True],
+        'feedback_responses': [],
+        'creator_id': 'U1',
+        'channel_id': 'C1',
+        'active': True,
+    })
+
+    state = {
+        'values': {
+            'resp_block_0': {
+                'resp_input_0': {
+                    'selected_options': [{'value': '0'}, {'value': '2'}]
+                }
+            }
+        }
+    }
+    view = {'state': state}
+    body = {'user': {'id': 'U2'}}
+    main_module.handle_feedback_submission(lambda: None, body, view, client=types.SimpleNamespace(chat_postEphemeral=lambda **k: None))
+
+    assert pd['vote_tallies'][0][0] == 1
+    assert pd['vote_tallies'][0][2] == 1
+    assert pd['feedback_responses'][0]['answers'][0] == [0, 2]
