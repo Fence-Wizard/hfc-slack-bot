@@ -104,7 +104,8 @@ def test_handle_vote_records_and_rejects(main_module, poll_setup):
     main_module.handle_vote(ack, body, action, client)
     assert poll_setup['votes']['U1'] == 1
     assert poll_setup['tallies'][1] == 1
-    assert 'Vote recorded' in client.messages[-1]['text']
+    msg = client.messages[-1]
+    assert msg['blocks'][0]['text']['text'].startswith('🗳 Vote recorded')
 
     # second vote should be rejected
     main_module.handle_vote(ack, body, action, client)

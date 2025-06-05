@@ -848,11 +848,18 @@ def handle_vote(ack, body, action, client):
 
     poll_data["tallies"][choice] += 1
 
-    rpt = f"🗳 Vote recorded for *{poll_data['options'][choice]}*\n\n*📊 Current Results:*"
-    for i, opt in enumerate(poll_data["options"]):
-        rpt += f"\n• {opt}: {poll_data['tallies'][i]}"
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"🗳 Vote recorded for *{poll_data['options'][choice]}*"
+            }
+        }
+    ]
+    blocks += build_vote_results_blocks(poll_data)
 
-    client.chat_postEphemeral(channel=ch, user=user, text=rpt)
+    client.chat_postEphemeral(channel=ch, user=user, blocks=blocks)
 
 # ─── Open Feedback Modal ─────────────────────────────────────────────────────
 @app.action("open_feedback")
@@ -987,24 +994,9 @@ def show_poll_results(ack, body, client):
         return
 
     if poll_data["type"] == "vote":
-        text = f"*📊 Results for:* {poll_data['question']}\n"
-        total = sum(poll_data["tallies"].values())
-        max_votes = max(poll_data["tallies"].values()) if total else 0
-        for i, opt in enumerate(poll_data["options"]):
-            tally = poll_data["tallies"][i]
-            pct = int(round((tally / total) * 100)) if total else 0
-            line = f"• {opt}: {tally} ({pct}%)"
-            if tally == max_votes and total:
-                line = f"*{line}*"
-            text += line + "\n"
-        if not poll_data.get("anonymous"):
-            text += "\nVotes:\n"
-            for user, choice in poll_data["votes"].items():
-                if poll_data.get("multi"):
-                    opts = ", ".join(poll_data['options'][c] for c in sorted(choice))
-                    text += f"• <@{user}> → {opts}\n"
-                else:
-                    text += f"• <@{user}> → {poll_data['options'][choice]}\n"
+        blocks = build_vote_results_blocks(poll_data)
+        client.chat_postEphemeral(channel=ch, user=usr, blocks=blocks)
+        return
     else:
         text = f"*✏️ Feedback for:* {poll_data['question']}\n"
         q_types = poll_data.get("feedback_kinds", ["feedback"] * len(poll_data["feedback_questions"]))
@@ -1049,7 +1041,52 @@ def show_poll_results(ack, body, client):
                     else:
                         text += f"    • *{q}*: {a}\n"
 
+
     client.chat_postEphemeral(channel=ch, user=usr, text=text)
+
+# Helper to build Block Kit results for vote polls
+def build_vote_results_blocks(data, header=None, context=None):
+    """Return a list of blocks summarizing vote tallies."""
+    total = sum(data["tallies"].values())
+    header_text = header or f"📊 Poll Results: *{data['question']}*"
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": header_text}},
+        {"type": "divider"},
+    ]
+
+    fields = []
+    for i, option in enumerate(data["options"]):
+        count = data["tallies"].get(i, 0)
+        pct = int(round((count / total) * 100)) if total else 0
+        bar = "▇" * int(round(pct / 5)) if pct else ""
+        fields.append({
+            "type": "mrkdwn",
+            "text": f"*{option}*\nVotes: {count} ({pct}%)  {bar}",
+        })
+
+    if len(fields) > 4:
+        mid = (len(fields) + 1) // 2
+        blocks.append({"type": "section", "fields": fields[:mid]})
+        blocks.append({"type": "section", "fields": fields[mid:]})
+    else:
+        blocks.append({"type": "section", "fields": fields})
+
+    if data.get("anonymous") is False:
+        vote_lines = []
+        for user_id, choice in data["votes"].items():
+            selected = data["options"][choice]
+            vote_lines.append(f"• <@{user_id}> → {selected}")
+        if vote_lines:
+            blocks.append({"type": "divider"})
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*Individual Votes:*"}})
+            for line in vote_lines:
+                blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": line}]})
+
+    if context:
+        blocks.append({"type": "divider"})
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": context}]})
+
+    return blocks
 
 # Helper to summarize results for non-vote polls
 def _non_vote_results_text():
@@ -1135,79 +1172,8 @@ def close_poll(ack, body, client):
         client.chat_postMessage(channel=ch, text=text)
         return
 
-    # Build Block Kit summary for vote polls
-    total_votes = sum(poll_data["tallies"].values())
-    header_text = f"📊 Poll Results: *{poll_data['question']}*"
     context_text = f"_Closed by <@{usr}> on {timestamp}_"
-
-    # Create fields: split into two columns if more than 3 options
-    fields = []
-    for i, option in enumerate(poll_data["options"]):
-        count = poll_data["tallies"].get(i, 0)
-        pct = int(round((count / total_votes) * 100)) if total_votes else 0
-        # Build a small bar chart using blocks for visual clarity
-        bar_length = int(round(pct / 5))  # one ▇ per 5%
-        bar = "▇" * bar_length if bar_length > 0 else ""
-        fields.append({
-            "type": "mrkdwn",
-            "text": f"*{option}*\nVotes: {count} ({pct}%)  {bar}"
-        })
-
-    # If there are more than 4 options, break into two sections
-    blocks = [
-        {"type": "header", "text": {"type": "plain_text", "text": header_text}},
-        {"type": "divider"}
-    ]
-
-    # Split fields into two columns if necessary
-    if len(fields) > 4:
-        mid = (len(fields) + 1) // 2
-        left_fields = fields[:mid]
-        right_fields = fields[mid:]
-        blocks.append({
-            "type": "section",
-            "fields": left_fields
-        })
-        blocks.append({
-            "type": "section",
-            "fields": right_fields
-        })
-    else:
-        blocks.append({
-            "type": "section",
-            "fields": fields
-        })
-
-    # Optionally list individual votes if visibility is public
-    if poll_data.get("anonymous") is False:
-        vote_lines = []
-        for user_id, choice in poll_data["votes"].items():
-            selected = poll_data["options"][choice]
-            vote_lines.append(f"• <@{user_id}> → {selected}")
-        if vote_lines:
-            blocks.append({"type": "divider"})
-            blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": "*Individual Votes:*"
-                }
-            })
-            # Add each vote as separate context element for readability
-            for line in vote_lines:
-                blocks.append({
-                    "type": "context",
-                    "elements": [{"type": "mrkdwn", "text": line}]
-                })
-
-    # Add closing context (who closed it and when)
-    blocks.append({"type": "divider"})
-    blocks.append({
-        "type": "context",
-        "elements": [{"type": "mrkdwn", "text": context_text}]
-    })
-
-    # Post the summarized results
+    blocks = build_vote_results_blocks(poll_data, context=context_text)
     client.chat_postMessage(channel=ch, blocks=blocks)
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
