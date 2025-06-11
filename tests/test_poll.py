@@ -203,6 +203,30 @@ def test_handle_poll_step2_ack_update(main_module):
     assert payloads[-1]['view']['callback_id'] == 'submit_poll'
 
 
+def test_handle_poll_step2_records_formats(main_module):
+    payloads = []
+    def ack(**kwargs):
+        payloads.append(kwargs)
+
+    meta = {'channel': 'C1', 'user': 'U1', 'type': 'feedback', 'title': 'Q', 'visibility': 'public', 'questions': [], 'q_types': {}}
+    body = {'trigger_id': 'T1'}
+    view = {
+        'private_metadata': json.dumps(meta),
+        'state': {
+            'values': {
+                'q_block_0': {'q_input_0': {'value': 'Question 1'}},
+                'q_type_block_0': {'q_type_select_0': {'selected_option': {'value': 'feedback'}}},
+                'format_block_0': {'format_select_0': {'selected_option': {'value': 'stars'}}}
+            }
+        }
+    }
+
+    main_module.handle_poll_step2(ack, body, view, client=object())
+
+    meta_out = json.loads(payloads[-1]['view']['private_metadata'])
+    assert meta_out['q_formats'][0] == 'stars'
+
+
 def test_handle_poll_step1_ranking(main_module):
     payloads = []
     def ack(**kwargs):
@@ -238,6 +262,31 @@ def test_handle_poll_submission_ranking(main_module):
     pd = main_module.poll_data
     assert pd['type'] == 'ranking'
     assert pd['feedback_questions'] == ['Rate']
+    assert pd['feedback_formats'] == ['stars']
+
+
+def test_poll_submission_feedback_formats(main_module):
+    def ack():
+        pass
+
+    meta = {
+        'channel': 'C1', 'user': 'U1', 'type': 'feedback', 'title': 'Q',
+        'visibility': 'public',
+        'questions': ['Q1'],
+        'q_types': ['feedback'],
+        'q_formats': ['stars']
+    }
+    view = {'private_metadata': json.dumps(meta), 'state': {'values': {}}}
+
+    main_module.handle_poll_submission(
+        ack,
+        body={},
+        view=view,
+        client=types.SimpleNamespace(
+            chat_postMessage=lambda **k: None,
+            conversations_open=lambda users: {'channel': {'id': 'D1'}}))
+
+    pd = main_module.poll_data
     assert pd['feedback_formats'] == ['stars']
 
 
