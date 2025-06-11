@@ -156,7 +156,7 @@ def build_blended_blocks(title, q_types=None, state=None):
                 })
 
         if sel == "vote":
-            for j in range(5):
+            for j in range(10):
                     val = state.get(f"opt_block_{i}_{j}", {}).get(f"opt_input_{i}_{j}", {}).get("value")
                     opt_el = {
                         "type": "plain_text_input",
@@ -286,7 +286,7 @@ def build_detail_blocks(title, questions, q_types, state=None, multi_flags=None)
                     **({"initial_options": [{"text": {"type": "plain_text", "text": "Users can select multiple options"}, "value": "allow_multi"}]} if allow_multi else {})
                 },
             })
-            for j in range(5):
+            for j in range(10):
                 val = state.get(f"opt_block_{i}_{j}", {}).get(f"opt_input_{i}_{j}", {}).get("value")
                 opt_el = {
                     "type": "plain_text_input",
@@ -376,7 +376,7 @@ def build_feedback_blocks(title, kinds=None, state=None):
                 "element": fmt_el,
             })
         else:
-            for j in range(5):
+            for j in range(10):
                 val = state.get(f"opt_block_{i}_{j}", {}).get(f"opt_input_{i}_{j}", {}).get("value")
                 opt_el = {
                     "type": "plain_text_input",
@@ -713,7 +713,7 @@ def handle_poll_submission(ack, body, view, client):
             elif kind == "vote":
                 f_kinds.append("vote")
                 opts_list = []
-                for j in range(5):
+                for j in range(10):
                     val = state.get(f"opt_block_{i}_{j}", {}).get(f"opt_input_{i}_{j}", {}).get("value")
                     if val:
                         opts_list.append(val)

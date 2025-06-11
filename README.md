@@ -53,7 +53,7 @@ question. Feedback questions still allow either free-form paragraphs or a
 The initial modal now lets you choose *Vote*, *Feedback*, *Ranking* or *Blended*.
 Selecting **Blended** prompts you for up to ten questions where each question
 can be marked as either a vote or feedback prompt. Vote questions can include
-up to five custom options for participants to choose from.
+up to ten custom options for participants to choose from.
 
 ## Ranking Polls
 
