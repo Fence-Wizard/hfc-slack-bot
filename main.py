@@ -572,6 +572,7 @@ def handle_poll_step2(ack, body, view, client):
     questions = []
     q_types = []
     multi_flags = []
+    q_formats = []
     for i in range(10):
         q = state.get(f"q_block_{i}", {}).get(f"q_input_{i}", {}).get("value")
         sel = state.get(f"q_type_block_{i}", {}).get(f"q_type_select_{i}", {}).get("selected_option")
@@ -584,10 +585,13 @@ def handle_poll_step2(ack, body, view, client):
         q_types.append(val)
         multi = state.get(f"multi_block_{i}", {}).get(f"multi_select_{i}", {}).get("selected_options")
         multi_flags.append(bool(multi))
+        fmt_sel = state.get(f"format_block_{i}", {}).get(f"format_select_{i}", {}).get("selected_option")
+        q_formats.append(fmt_sel["value"] if fmt_sel else None)
 
     meta["questions"] = questions
     meta["q_types"] = q_types
     meta["multi_flags"] = multi_flags
+    meta["q_formats"] = q_formats
 
     blocks = build_detail_blocks(meta["title"], questions, q_types, multi_flags=multi_flags)
 
@@ -695,6 +699,7 @@ def handle_poll_submission(ack, body, view, client):
     elif p_type in ("feedback", "blended"):
         questions = info.get("questions", [])
         q_types = info.get("q_types", [])
+        q_formats = info.get("q_formats", [])
         for i, q in enumerate(questions):
             fqs.append(q)
             kind = q_types[i] if i < len(q_types) else "feedback"
@@ -719,7 +724,8 @@ def handle_poll_submission(ack, body, view, client):
             else:
                 f_kinds.append("feedback")
                 question_opts.append([])
-                f_formats.append(None)
+                fmt = q_formats[i] if i < len(q_formats) else None
+                f_formats.append(fmt or "paragraph")
                 multi_flags.append(False)
 
     # validation
