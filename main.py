@@ -261,13 +261,31 @@ def build_question_type_blocks(title, q_types=None, state=None):
 
 
 # Build blocks for vote option entry based on question types (step 3)
-def build_detail_blocks(title, questions, q_types, state=None):
+def build_detail_blocks(title, questions, q_types, state=None, multi_flags=None):
     """Return block kit structure for entering vote options."""
     blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*"}}]
     state = state or {}
+    multi_flags = multi_flags or [False] * len(questions)
     for i, q in enumerate(questions):
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*{q}*"}})
         if q_types[i] == "vote":
+            multi_checked = state.get(f"multi_block_{i}", {}).get(f"multi_select_{i}", {}).get("selected_options")
+            allow_multi = bool(multi_checked) if multi_checked is not None else (multi_flags[i] if i < len(multi_flags) else False)
+            blocks.append({
+                "type": "input",
+                "block_id": f"multi_block_{i}",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "Allow multiple selections?"},
+                "element": {
+                    "type": "checkboxes",
+                    "action_id": f"multi_select_{i}",
+                    "options": [{
+                        "text": {"type": "plain_text", "text": "Users can select multiple options"},
+                        "value": "allow_multi"
+                    }],
+                    **({"initial_options": [{"text": {"type": "plain_text", "text": "Users can select multiple options"}, "value": "allow_multi"}]} if allow_multi else {})
+                },
+            })
             for j in range(5):
                 val = state.get(f"opt_block_{i}_{j}", {}).get(f"opt_input_{i}_{j}", {}).get("value")
                 opt_el = {
@@ -571,7 +589,7 @@ def handle_poll_step2(ack, body, view, client):
     meta["q_types"] = q_types
     meta["multi_flags"] = multi_flags
 
-    blocks = build_detail_blocks(meta["title"], questions, q_types)
+    blocks = build_detail_blocks(meta["title"], questions, q_types, multi_flags=multi_flags)
 
     ack(
         response_action="update",
@@ -661,6 +679,7 @@ def handle_poll_submission(ack, body, view, client):
     # collect
     opts, fqs, f_formats, f_kinds = [], [], [], []
     question_opts = []
+    multi_flags = []
     if p_type == "vote":
         for i in range(10):
             val = state.get(f"option_block_{i}", {})\
@@ -685,6 +704,7 @@ def handle_poll_submission(ack, body, view, client):
                 f_kinds.append("feedback")
                 question_opts.append([])
                 f_formats.append("stars")
+                multi_flags.append(False)
             elif kind == "vote":
                 f_kinds.append("vote")
                 opts_list = []
@@ -694,10 +714,13 @@ def handle_poll_submission(ack, body, view, client):
                         opts_list.append(val)
                 question_opts.append(opts_list)
                 f_formats.append(None)
+                multi_sel = state.get(f"multi_block_{i}", {}).get(f"multi_select_{i}", {}).get("selected_options")
+                multi_flags.append(bool(multi_sel))
             else:
                 f_kinds.append("feedback")
                 question_opts.append([])
                 f_formats.append(None)
+                multi_flags.append(False)
 
     # validation
     if p_type == "vote" and len(opts) < 2:
@@ -760,7 +783,7 @@ def handle_poll_submission(ack, body, view, client):
             "channel_id": channel_id,
             "anonymous": visibility == "anonymous",
             "multi": False,
-            "multi_questions": info.get("multi_flags", []),
+            "multi_questions": multi_flags,
             "active": True,
         })
     elif p_type == "ranking":
@@ -809,7 +832,7 @@ def handle_poll_submission(ack, body, view, client):
             "channel_id": channel_id,
             "anonymous": visibility == "anonymous",
             "multi": False,
-            "multi_questions": info.get("multi_flags", []),
+            "multi_questions": multi_flags,
             "active": True,
         })
     else:
